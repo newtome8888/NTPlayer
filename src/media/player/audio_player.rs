@@ -1,15 +1,17 @@
 use crossbeam::atomic::AtomicCell;
-use rodio::{source::Source, OutputStream, Sample, Sink};
+use log::info;
 use std::{
     cell::Cell,
-    sync::{Arc},
+    sync::Arc,
     thread::{self, JoinHandle},
+    time::Duration,
 };
 
 use super::traits::Player;
 use crate::{
-    media::decoder::AudioSummary,
-    util::error::{handle_result, SuperError},
+    entity::EventMessage,
+    global::{AUDIO_BUFFER, AUDIO_PTS_MILLIS, AUDIO_SUMMARY, EVENT_CHANNEL},
+    util::error::{handle_send_result, SuperError},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,8 +29,6 @@ enum State {
 pub struct AudioPlayer {
     /// State of the audio player
     state: Arc<AtomicCell<State>>,
-    /// Handle to the device that output sounds
-    sink: Arc<Sink>,
     /// Thread id
     tid: Cell<Option<JoinHandle<()>>>,
 }
@@ -37,28 +37,32 @@ impl AudioPlayer {
     /// `es`: System event sender
     /// `ts`: Benchmark timestamp sender
     pub fn new() -> Self {
-        let sink = handle_result(Self::get_sink()).expect("Initialize audio context failed!");
-
         Self {
-            sink: Arc::new(sink),
             state: Arc::new(AtomicCell::new(State::Stopped)),
             tid: Cell::new(None),
         }
     }
 
     /// Set the buffer queue which will be used for audio play
-    pub fn start(&mut self, summary: &Option<AudioSummary>) {
+    pub fn start(&mut self) -> Result<(), SuperError> {
+        let summary = AUDIO_SUMMARY.read().unwrap();
+        if summary.is_none() {
+            return Ok(());
+        }
+
         // If the thread is already running, stop it first
         if let Some(_tid) = self.tid.take() {
             if !_tid.is_finished() {
-                self.state.store(State::ReadyToStop);
                 _tid.join().expect("Join audio thread failed!");
             }
         }
 
-        // Loop to play audio in new thread
+        let summary = summary.as_ref().unwrap();
+        info!("Starting audio player, summary: {:?}", summary);
+
         let state = self.state.clone();
-        let sink = self.sink.clone();
+        let sleep_duration = Duration::from_millis(summary.play_interval);
+
         let tid = thread::spawn({
             state.store(State::Playing);
             move || loop {
@@ -87,40 +91,21 @@ impl AudioPlayer {
                 }
 
                 // Play audio
-                // if let Some(audio_data) = buffer.pop() {
-                //     // Update timestamp of playing
-                //     ts.store(
-                //         audio_data.pts,
-                //         std::sync::atomic::Ordering::Release,
-                //     );
+                if let Some(frame) = AUDIO_BUFFER.pop() {
+                    // Update timestamp of playing
+                    AUDIO_PTS_MILLIS.store(frame.pts_millis, std::sync::atomic::Ordering::Release);
 
-                //     let timeout = 1 / audio_data.fps;
-                // handle_result(Self::play_audio(&sink, audio_data), &es).unwrap();
+                    let result = EVENT_CHANNEL.0.send(EventMessage::RenderAudio(frame));
+                    handle_send_result(result);
+                }
 
-                // thread::sleep(Duration::from_millis(timeout as u64));
-                // }
+                thread::sleep(sleep_duration);
             }
         });
 
-        // self.tid.replace(Some(tid));
-    }
-
-    fn play_audio<S>(sink: &Arc<Sink>, source: S) -> Result<(), SuperError>
-    where
-        S: Source + Send + 'static,
-        S::Item: Sample + Send,
-    {
-        sink.append(source);
-        sink.sleep_until_end();
+        self.tid.set(Some(tid));
 
         Ok(())
-    }
-
-    fn get_sink() -> Result<Sink, SuperError> {
-        let (_, stream_handle) = OutputStream::try_default()?;
-        let sink = Sink::try_new(&stream_handle)?;
-
-        Ok(sink)
     }
 }
 
@@ -147,22 +132,5 @@ impl Player for AudioPlayer {
 
     fn fast_rewind(&mut self) {
         todo!();
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use rodio::{source::SineWave, Source};
-    use std::{sync::Arc, time::Duration};
-
-    use super::AudioPlayer;
-
-    #[test]
-    fn test_play_audio() {
-        let sink = &Arc::new(AudioPlayer::get_sink().unwrap());
-        let source = SineWave::new(200.0)
-            .take_duration(Duration::from_secs_f32(3.0))
-            .amplify(0.20);
-        AudioPlayer::play_audio(sink, source).expect("failed to play audio");
     }
 }

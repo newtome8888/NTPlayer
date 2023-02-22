@@ -278,6 +278,8 @@ impl Iterator for IterablePath {
 
 #[cfg(test)]
 mod tests {
+    // use tracing::error;
+
     use crate::{config::Config, util::log_builder};
 
     use super::*;
@@ -374,7 +376,7 @@ mod tests {
 
     #[test]
     fn test_move_to() {
-        log_builder::load_logger(log::LevelFilter::Warn);
+        // log_builder::load_logger(log::LevelFilter::Warn);
 
         let conf = Config::load();
         assert_ne!(None, conf);

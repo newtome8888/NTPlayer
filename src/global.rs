@@ -2,35 +2,46 @@ use crossbeam::channel::unbounded;
 
 use sdl2::pixels::Color;
 use static_init::dynamic;
-use std::sync::atomic::AtomicI64;
+use std::{sync::{atomic::{AtomicI64, AtomicI16}, RwLock}};
 
 use crate::{
-    media::decoder::{AudioBuffer, SubtitleBuffer, VideoBuffer},
+    media::decoder::{AudioBuffer, SubtitleBuffer, VideoBuffer, AudioSummary, VideoSummary, SubtitleSummary},
     EventMessage,
 };
 use crossbeam::channel::{Receiver, Sender};
 
 //
 //
-//  No lazy static variables
+//  Normal static variables
 //
 //
 
+//
 // App related
+//
 pub const APP_NAME: &str = "NT Player";
 pub const LOGO_PATH: &str = "./assets/logo.png";
 pub const DEFAULT_BACKGROUND_COLOR: Color = Color::RGB(40, 40, 40);
 pub const INIT_WIDTH: u32 = 1024;
-pub const INIT_HEIGHT: u32 = 768;
+pub const INIT_HEIGHT: u32 = 608;
 
+//
 // Media related
+//
 /// Unit: milliseconds
-pub const MEDIA_TIMESTAMP_SYNC_DIFF: u64 = 200;
+pub const MEDIA_TIMESTAMP_SYNC_DIFF: i64 = 200;
 /// Unit: milliseconds
 pub const FORWARD_REWIND_AMOUNT: i64 = 10000;
-const MEDIA_BUFFER_SIZE: usize = 50;
-/// Global play timestamp, unit microseconds
-pub static AUDIO_PTS: AtomicI64 = AtomicI64::new(0);
+/// Maximum number of frames that can be hold in `AUDIO_SUMMARY` and `VIDEO_SUMMARY`
+const MEDIA_BUFFER_SIZE: usize = 10;
+/// Global volume, modify this value will affect to the play volume
+pub static VOLUME: AtomicI16 = AtomicI16::new(50);
+pub static VOLUME_STEP: i16 = 10;
+/// Global play timestamp, unit milliseconds+
+pub static AUDIO_PTS_MILLIS: AtomicI64 = AtomicI64::new(0);
+pub static AUDIO_SUMMARY: RwLock<Option<AudioSummary>> = RwLock::new(None);
+pub static VIDEO_SUMMARY: RwLock<Option<VideoSummary>> = RwLock::new(None);
+pub static SUBTITLE_SUMMARY: RwLock<Option<SubtitleSummary>> = RwLock::new(None);
 
 //
 //

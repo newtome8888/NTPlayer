@@ -1,8 +1,9 @@
 use crossbeam::channel::{SendError};
+// use tracing::error;
 use log::error;
-use std::error::Error;
+use std::{error::Error, fmt::Display};
 
-use crate::{entity::EventMessage, global_variables::EVENT_CHANNEL};
+use crate::{entity::EventMessage, global::EVENT_CHANNEL};
 
 pub type SuperError = Box<dyn Error>;
 
@@ -20,5 +21,24 @@ pub fn handle_result<T>(result: Result<T, SuperError>) -> Option<T> {
 pub fn handle_send_result<T>(result: Result<(), SendError<T>>) {
     if let Err(err) = result {
         error!("{}", err);
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CustomError{
+    message: String,
+}
+
+impl CustomError {
+    pub fn new<T:Into<String>>(message: T)->Self{
+        Self { message: message.into() }
+    }
+}
+
+impl Error for CustomError {}
+
+impl Display for CustomError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)
     }
 }

@@ -1,4 +1,6 @@
 use std::{path::PathBuf, sync::Arc};
+use rsmpeg::ffi::AVFrame;
+use sdl2::video::WindowPos;
 
 use crate::media::decoder::{VideoFrame, AudioFrame, SubtitleFrame};
 
@@ -21,8 +23,11 @@ pub enum EventMessage{
 
     // Rendering
     RenderVideo(Arc<VideoFrame>),
-    RenderAudio(Arc<AudioFrame>),
+    RenderAudio(AudioFrame),
     RenderSubtitle(Arc<SubtitleFrame>),
+
+    Resize((u32, u32)),
+    SetPosition{x:WindowPos, y:WindowPos},
 }
 
 pub struct PlayData {
@@ -43,11 +48,4 @@ pub struct FileOpenedData{
 
 pub struct DirOpenedData {
     pub paths: Vec<&'static str>,
-}
-
-pub enum PlayerState {
-    NONE,
-    PLAYING,
-    PAUSING,
-    STOPPED,
 }

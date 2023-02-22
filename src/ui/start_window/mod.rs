@@ -12,9 +12,9 @@ use sdl2::render::{Canvas, Texture, TextureCreator};
 use sdl2::surface::Surface;
 use sdl2::video::{Window, WindowContext};
 use sdl2::VideoSubsystem;
+// use tracing::warn;
 
-use crate::entity::PlayerState;
-use crate::global_variables::{
+use crate::global::{
     APP_NAME, DEFAULT_BACKGROUND_COLOR, INIT_HEIGHT, INIT_WIDTH, LOGO_PATH,
 };
 use crate::media::decoder::VideoFrame;
@@ -60,17 +60,6 @@ impl MainWindow {
             progress_bar: ProgressBar,
             play_box,
         })
-    }
-
-    pub fn set_state(&mut self, state: PlayerState) {
-        match state {
-            PlayerState::NONE => {
-                todo!()
-            }
-            PlayerState::PLAYING => todo!(),
-            PlayerState::PAUSING => todo!(),
-            PlayerState::STOPPED => todo!(),
-        }
     }
 
     pub fn set_logo(&mut self, path: &str) -> Result<(), SuperError> {
@@ -178,7 +167,7 @@ impl PlayBox {
         let frame = self.frame.as_ref().unwrap();
         match frame.format {
             AVPixelFormat_AV_PIX_FMT_YUV420P => {
-                let data = frame.data;
+                let data = &frame.data;
                 let ypitch = frame.width * frame.height;
                 let upitch = ypitch / 2;
                 let vpitch = upitch;

@@ -2,7 +2,6 @@ use std::{
     error::Error,
     ffi::CString,
     ops::{Deref, DerefMut},
-    slice,
     sync::{
         atomic::{AtomicBool, AtomicI64, Ordering},
         Arc,
@@ -13,31 +12,31 @@ use std::{
 
 use crossbeam::queue::ArrayQueue;
 use log::{debug, error, info, warn};
-
 use rsmpeg::{
     avcodec::{AVCodec, AVCodecContext, AVPacket},
     avformat::AVFormatContextInput,
-    avutil::AVFrame,
     ffi::{
-        AVMediaType_AVMEDIA_TYPE_ATTACHMENT, AVMediaType_AVMEDIA_TYPE_AUDIO,
-        AVMediaType_AVMEDIA_TYPE_DATA, AVMediaType_AVMEDIA_TYPE_NB,
-        AVMediaType_AVMEDIA_TYPE_SUBTITLE, AVMediaType_AVMEDIA_TYPE_VIDEO,
-        AVPixelFormat_AV_PIX_FMT_YUV420P,
+        AVMediaType_AVMEDIA_TYPE_ATTACHMENT as AVMEDIATYPE_AVMEDIA_TYPE_ATTACHMENT,
+        AVMediaType_AVMEDIA_TYPE_AUDIO as AVMEDIATYPE_AVMEDIA_TYPE_AUDIO,
+        AVMediaType_AVMEDIA_TYPE_DATA as AVMEDIATYPE_AVMEDIA_TYPE_DATA,
+        AVMediaType_AVMEDIA_TYPE_NB as AVMEDIATYPE_AVMEDIA_TYPE_NB,
+        AVMediaType_AVMEDIA_TYPE_SUBTITLE as AVMEDIATYPE_AVMEDIA_TYPE_SUBTITLE,
+        AVMediaType_AVMEDIA_TYPE_VIDEO as AVMEDIATYPE_AVMEDIA_TYPE_VIDEO,
     },
 };
 
-use crate::global_variables::{AUDIO_BUFFER, SUBTITLE_BUFFER, VIDEO_BUFFER};
+use crate::{
+    global::{
+        AUDIO_BUFFER, AUDIO_SUMMARY, SUBTITLE_BUFFER, SUBTITLE_SUMMARY, VIDEO_BUFFER, VIDEO_SUMMARY,
+    },
+    util::{pixel_format::parse_video_frame, sample_format},
+};
+
 const BUFFER_FULL_SLEEP_DURATION: Duration = Duration::from_millis(200);
-pub type MediaSummary = (
-    Option<AudioSummary>,
-    Option<VideoSummary>,
-    Option<SubtitleSummary>,
-);
 
 pub struct MediaDecoder {
     stop_flag: Arc<AtomicBool>,
     seek_to: Arc<AtomicI64>,
-    pub media_summary: MediaSummary,
 }
 
 impl MediaDecoder {
@@ -46,15 +45,11 @@ impl MediaDecoder {
         let seek_to = Arc::new(AtomicI64::new(-1));
 
         let ctx = MediaDecoder::get_media_context(&path)?;
-        let (streams, media_summary) = Self::get_streams(&ctx);
+        let streams = Self::get_streams(&ctx);
 
         Self::start_task(ctx, streams, &stop_flag, &seek_to);
 
-        Ok(Self {
-            stop_flag,
-            seek_to,
-            media_summary,
-        })
+        Ok(Self { stop_flag, seek_to })
     }
 
     /// Seek to the specified position
@@ -77,7 +72,7 @@ impl MediaDecoder {
         let stop_flag = stop_flag.clone();
         let seek_to = seek_to.clone();
 
-        let audio_stream = streams.audio_stream;
+        let mut audio_stream = streams.audio_stream;
         let mut video_stream = streams.video_stream;
         let subtitle_stream = streams.subtitle_stream;
         let data_stream = streams.data_stream;
@@ -108,6 +103,7 @@ impl MediaDecoder {
                             SUBTITLE_BUFFER.pop();
                         }
 
+                        
                         // Finally seek to the new position
                         // todo!
 
@@ -126,7 +122,16 @@ impl MediaDecoder {
                             // Only process the data in correct stream, ignore others
                             let stream_index = Some(packet.stream_index);
                             if stream_index == audio_stream.index {
-                                // Self::decode_audio(audio_decoder, packet, &vb);
+                                audio_stream.decoder_ctx = audio_stream
+                                    .decoder_ctx
+                                    .and_then(|dctx| {
+                                        let dctx = Self::decode_audio(dctx, &packet);
+                                        Some(dctx)
+                                    })
+                                    .or_else(|| {
+                                        warn!("Audio stream founded but no decoder!");
+                                        None
+                                    });
                             } else if stream_index == video_stream.index {
                                 video_stream.decoder_ctx = video_stream
                                     .decoder_ctx
@@ -162,6 +167,33 @@ impl MediaDecoder {
         debug!("thread finished");
     }
 
+    // Notice! The context should be returned to return back the ownership
+    fn decode_audio(dctx: AVCodecContext, packet: &AVPacket) -> AVCodecContext {
+        let mut dctx = dctx;
+        if let Err(err) = dctx.send_packet(Some(packet)) {
+            debug!("send packet to context error: {}", err);
+            return dctx;
+        }
+
+        match dctx.receive_frame() {
+            Ok(mut frame) => {
+                let mut audio_frame = sample_format::parse_audio_frame(&mut frame);
+
+                // Push frame to buffer until succeeded
+                while let Err(f) = AUDIO_BUFFER.push(audio_frame) {
+                    audio_frame = f;
+                    thread::sleep(BUFFER_FULL_SLEEP_DURATION);
+                }
+            }
+            Err(err) => {
+                debug!("{}", err);
+            }
+        }
+
+        dctx
+    }
+
+    // Notice! The context should be returned to return back the ownership
     fn decode_video(dctx: AVCodecContext, packet: &AVPacket) -> AVCodecContext {
         let mut dctx = dctx;
         if let Err(err) = dctx.send_packet(Some(packet)) {
@@ -171,7 +203,7 @@ impl MediaDecoder {
 
         match dctx.receive_frame() {
             Ok(frame) => {
-                let mut vf = Self::parse_video_frame(&frame);
+                let mut vf = parse_video_frame(&frame);
                 // Push frame to buffer until succeeded
                 while let Err(f) = VIDEO_BUFFER.push(vf) {
                     vf = f;
@@ -195,7 +227,7 @@ impl MediaDecoder {
         Ok(ctx)
     }
 
-    fn get_streams(ctx: &AVFormatContextInput) -> (MediaStreams, MediaSummary) {
+    fn get_streams(ctx: &AVFormatContextInput) -> MediaStreams {
         let streams = ctx.streams();
 
         let mut audio_stream = StreamInfo::default();
@@ -205,10 +237,6 @@ impl MediaDecoder {
         let mut attachment_stream = StreamInfo::default();
         let mut nb_stream = StreamInfo::default();
         let mut unknown_streams = Vec::<StreamInfo>::new();
-
-        let mut audio_summary = None;
-        let mut video_summary = None;
-        let mut subtitle_summary = None;
 
         for stream in streams {
             if stream.nb_frames <= 0 {
@@ -237,34 +265,65 @@ impl MediaDecoder {
                 decoder_ctx,
                 index: Some(stream.index),
             };
+
+            let duration = stream.duration as u64;
+            let frames = stream.nb_frames as u64;
+            let time_base_num = stream.time_base.num as u64;
+            let time_base_den = stream.time_base.den as u64;
+            let play_interval = 1000 * duration * time_base_num / time_base_den / frames;
+
             match codec_type {
-                AVMediaType_AVMEDIA_TYPE_AUDIO => {
+                AVMEDIATYPE_AVMEDIA_TYPE_AUDIO => {
                     audio_stream = stream_info;
-                    audio_summary = Some(AudioSummary);
+                    let audio_summary = Some(AudioSummary {
+                        decoder_name,
+                        duration,
+                        frames,
+                        time_base_num,
+                        time_base_den,
+                        play_interval,
+                        channels: codecpar.channels as u8,
+                        channel_layout: codecpar.channel_layout,
+                        sample_rate: codecpar.sample_rate,
+                        frame_size: codecpar.frame_size,
+                    });
+
+                    // Save audio summary to static
+                    let mut w = AUDIO_SUMMARY.write().unwrap();
+                    *w = audio_summary;
                 }
-                AVMediaType_AVMEDIA_TYPE_VIDEO => {
+                AVMEDIATYPE_AVMEDIA_TYPE_VIDEO => {
                     video_stream = stream_info;
-                    video_summary = Some(VideoSummary {
-                        decoder_name: decoder_name.to_string(),
-                        duration: stream.duration as u64,
-                        frames: stream.nb_frames as u64,
-                        time_base_num: stream.time_base.num as u64,
-                        time_base_den: stream.time_base.den as u64,
+                    let video_summary = Some(VideoSummary {
+                        decoder_name,
+                        duration,
+                        frames,
+                        time_base_num,
+                        time_base_den,
+                        play_interval,
                         width: codecpar.width as u32,
                         height: codecpar.height as u32,
                     });
+
+                    // Save video summary to static
+                    let mut w = VIDEO_SUMMARY.write().unwrap();
+                    *w = video_summary;
                 }
-                AVMediaType_AVMEDIA_TYPE_SUBTITLE => {
+                AVMEDIATYPE_AVMEDIA_TYPE_SUBTITLE => {
                     subtitle_stream = stream_info;
-                    subtitle_summary = Some(SubtitleSummary);
+                    let subtitle_summary = Some(SubtitleSummary);
+
+                    // Save subtitle summary to static
+                    let mut w = SUBTITLE_SUMMARY.write().unwrap();
+                    *w = subtitle_summary;
                 }
-                AVMediaType_AVMEDIA_TYPE_ATTACHMENT => {
+                AVMEDIATYPE_AVMEDIA_TYPE_ATTACHMENT => {
                     attachment_stream = stream_info;
                 }
-                AVMediaType_AVMEDIA_TYPE_DATA => {
+                AVMEDIATYPE_AVMEDIA_TYPE_DATA => {
                     data_stream = stream_info;
                 }
-                AVMediaType_AVMEDIA_TYPE_NB => {
+                AVMEDIATYPE_AVMEDIA_TYPE_NB => {
                     nb_stream = stream_info;
                 }
                 _ => {
@@ -273,69 +332,15 @@ impl MediaDecoder {
             }
         }
 
-        (
-            MediaStreams {
-                audio_stream,
-                video_stream,
-                subtitle_stream,
-                attachment_stream,
-                nb_stream,
-                data_stream,
-                unknown_streams,
-            },
-            (audio_summary, video_summary, subtitle_summary),
-        )
-    }
-
-    fn parse_video_frame(frame: &AVFrame) -> VideoFrame {
-        let width = frame.width as usize;
-        let height = frame.height as usize;
-
-        match frame.format {
-            AVPixelFormat_AV_PIX_FMT_YUV420P => {
-                let y_size = width * height;
-                let u_size = y_size / 4; // width/2 * height/2
-                let v_size = y_size / 4; // width/2 * height/2
-
-                let y_ptr = frame.data[0];
-                let y = unsafe { slice::from_raw_parts(y_ptr, y_size) };
-
-                let u_ptr = frame.data[1];
-                let u = unsafe { slice::from_raw_parts(u_ptr, u_size) };
-
-                let v_ptr = frame.data[2];
-                let v = unsafe { slice::from_raw_parts(v_ptr, v_size) };
-
-                VideoFrame {
-                    format: frame.format,
-                    data: [y, u, v, &[], &[], &[], &[], &[]],
-                    width,
-                    height,
-                    pts: frame.pts,
-                }
-            }
-            _ => {
-                warn!(
-                    "Un implemented pixel format: {}. It needs some time to finish the work.",
-                    frame.format
-                );
-                VideoFrame {
-                    format: frame.format,
-                    data: [&[], &[], &[], &[], &[], &[], &[], &[]],
-                    width,
-                    height,
-                    pts: frame.pts,
-                }
-            }
+        MediaStreams {
+            audio_stream,
+            video_stream,
+            subtitle_stream,
+            attachment_stream,
+            nb_stream,
+            data_stream,
+            unknown_streams,
         }
-    }
-
-    fn parse_audio_frame(frame: &AVFrame) -> AudioFrame {
-        todo!();
-    }
-
-    fn parse_subtitle_frame(frame: &AVFrame) -> SubtitleFrame {
-        todo!();
     }
 }
 
@@ -343,7 +348,7 @@ impl MediaDecoder {
 pub struct VideoSummary {
     /// The name of decoder if any
     pub decoder_name: String,
-    /// The duration of whole media, unit: second
+    /// The duration of whole media
     pub duration: u64,
     /// Number of frames in media
     pub frames: u64,
@@ -351,6 +356,8 @@ pub struct VideoSummary {
     pub time_base_num: u64,
     /// Denominator of timebase
     pub time_base_den: u64,
+    /// Play interval with milliseconds
+    pub play_interval: u64,
     /// Width of video
     pub width: u32,
     /// Height of video
@@ -358,7 +365,28 @@ pub struct VideoSummary {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AudioSummary;
+pub struct AudioSummary {
+    /// The name of decoder if any
+    pub decoder_name: String,
+    /// The duration of whole media
+    pub duration: u64,
+    /// Number of frames in media
+    pub frames: u64,
+    /// Number of timebase
+    pub time_base_num: u64,
+    /// Denominator of timebase
+    pub time_base_den: u64,
+    /// Play interval with milliseconds
+    pub play_interval: u64,
+    /// Number of channels
+    pub channels: u8,
+    /// Layout of channel, most of the time but not always can be converted with channels
+    pub channel_layout: u64,
+    /// Samples per second
+    pub sample_rate: i32,
+    /// How much samples per frame
+    pub frame_size: i32,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SubtitleSummary;
@@ -395,8 +423,18 @@ trait MediaBuffer {
     fn is_full(&self) -> bool;
 }
 
+#[derive(Debug, Clone, PartialEq)]
 pub struct AudioFrame {
-    data: [&'static [u8]; 8],
+    pub format: i32,
+    /// Audio content, usually FLTP format, type: `AVSampleFormat`
+    pub data: Vec<f32>,
+    /// display timestamp
+    pub pts: i64,
+    /// Pts in milliseconds
+    pub pts_millis: i64,
+    pub sample_rate: i32,
+    pub channels: u8,
+    pub channel_layout: u8,
 }
 
 pub struct AudioBuffer {
@@ -427,10 +465,12 @@ impl DerefMut for AudioBuffer {
 
 pub struct VideoFrame {
     pub format: i32,
-    pub data: [&'static [u8]; 8],
+    pub data: [Vec<u8>; 8],
     pub width: usize,
     pub height: usize,
     pub pts: i64,
+    /// Pts in milliseconds
+    pub pts_millis: i64,
 }
 
 pub struct VideoBuffer {
@@ -460,7 +500,11 @@ impl DerefMut for VideoBuffer {
 }
 
 pub struct SubtitleFrame {
-    data: [&'static [u8]; 8],
+    pub format: i32,
+    pub data: [Vec<u8>; 8],
+    pub pts: i64,
+    /// Pts in milliseconds
+    pub pts_millis: i64,
 }
 
 pub struct SubtitleBuffer {

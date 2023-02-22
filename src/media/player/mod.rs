@@ -2,14 +2,14 @@ pub mod audio_player;
 pub mod traits;
 pub mod vedio_player;
 
+use crate::util::error::SuperError;
+
 use self::{audio_player::AudioPlayer, traits::Player, vedio_player::VideoPlayer};
-use super::decoder::MediaSummary;
-use crate::entity::PlayerState;
 
 pub struct MediaPlayer {
-    pub audio_player: AudioPlayer,
-    pub video_player: VideoPlayer,
-    pub state: PlayerState,
+    audio_player: AudioPlayer,
+    video_player: VideoPlayer,
+    state: PlayerState,
 }
 
 impl MediaPlayer {
@@ -24,13 +24,14 @@ impl MediaPlayer {
         }
     }
 
-    pub fn start(&mut self, media_summary: &MediaSummary) {
-        let ap = &mut self.audio_player;
-        let vp = &mut self.video_player;
+    pub fn start(&mut self)-> Result<(), SuperError>{
+        let audio_player = &mut self.audio_player;
+        let video_player = &mut self.video_player;
 
-        let (audio_summary, video_summary, subtitle_summary) = media_summary;
-        ap.start(audio_summary);
-        vp.start(video_summary);
+        audio_player.start();
+        video_player.start()?;
+
+        Ok(())
     }
 }
 
@@ -70,4 +71,11 @@ impl Player for MediaPlayer {
         self.video_player.fast_rewind();
         self.state = PlayerState::PLAYING;
     }
+}
+
+enum PlayerState {
+    NONE,
+    PLAYING,
+    PAUSING,
+    STOPPED,
 }
