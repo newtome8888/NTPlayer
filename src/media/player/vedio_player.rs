@@ -13,7 +13,6 @@ use crate::{
     global::{
         EVENT_CHANNEL, GLOBAL_PTS_MILLIS, MEDIA_TIMESTAMP_SYNC_DIFF, VIDEO_BUFFER, VIDEO_SUMMARY,
     },
-    media::decoder::VideoSummary,
     util::error::{safe_send, SuperError},
 };
 
@@ -91,7 +90,7 @@ impl VideoPlayer {
                             continue;
                         }
                         State::SeekFinished => {
-                            debug!("Seek finished");
+                            debug!("Video player seek finished");
                             state.store(State::Playing);
                         }
                     }

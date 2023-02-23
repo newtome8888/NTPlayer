@@ -2,10 +2,15 @@ use crossbeam::channel::unbounded;
 
 use sdl2::pixels::Color;
 use static_init::dynamic;
-use std::{sync::{atomic::{AtomicI64, AtomicI16}, RwLock}, mem::MaybeUninit};
+use std::sync::{
+    atomic::{AtomicI16, AtomicI64},
+    RwLock,
+};
 
 use crate::{
-    media::decoder::{AudioBuffer, SubtitleBuffer, VideoBuffer, AudioSummary, VideoSummary, SubtitleSummary},
+    media::decoder::{
+        AudioBuffer, AudioSummary, SubtitleBuffer, SubtitleSummary, VideoBuffer, VideoSummary,
+    },
     EventMessage,
 };
 use crossbeam::channel::{Receiver, Sender};

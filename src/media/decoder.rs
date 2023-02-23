@@ -3,7 +3,7 @@ use std::{
     ffi::CString,
     ops::{Deref, DerefMut},
     sync::{
-        atomic::{AtomicBool, AtomicI64, Ordering},
+        atomic::{AtomicBool, AtomicI64, AtomicU8, Ordering},
         Arc,
     },
     thread,
@@ -22,28 +22,32 @@ use rsmpeg::{
         AVMediaType_AVMEDIA_TYPE_DATA as AVMEDIATYPE_AVMEDIA_TYPE_DATA,
         AVMediaType_AVMEDIA_TYPE_NB as AVMEDIATYPE_AVMEDIA_TYPE_NB,
         AVMediaType_AVMEDIA_TYPE_SUBTITLE as AVMEDIATYPE_AVMEDIA_TYPE_SUBTITLE,
-        AVMediaType_AVMEDIA_TYPE_VIDEO as AVMEDIATYPE_AVMEDIA_TYPE_VIDEO, AVSEEK_FLAG_ANY,
-        AVSEEK_FLAG_BACKWARD, AVSEEK_FLAG_FRAME,
+        AVMediaType_AVMEDIA_TYPE_VIDEO as AVMEDIATYPE_AVMEDIA_TYPE_VIDEO, AVSEEK_FLAG_FRAME,
     },
 };
 
 use crate::{
     entity::EventMessage,
     global::{
-        AUDIO_BUFFER, AUDIO_SUMMARY, EVENT_CHANNEL, FR_STEP, GLOBAL_PTS_MILLIS,
-        MEDIA_TIMESTAMP_SYNC_DIFF, SUBTITLE_BUFFER, SUBTITLE_SUMMARY, VIDEO_BUFFER, VIDEO_SUMMARY,
+        AUDIO_BUFFER, AUDIO_SUMMARY, EVENT_CHANNEL, SUBTITLE_BUFFER, SUBTITLE_SUMMARY,
+        VIDEO_BUFFER, VIDEO_SUMMARY,
     },
     util::{error::safe_send, pixel_format::parse_video_frame, sample_format},
 };
 
+/// The wait duration if buffer queues are full
 const BUFFER_FULL_SLEEP_DURATION: Duration = Duration::from_millis(200);
-const SEEK_FLAG: i32 = AVSEEK_FLAG_BACKWARD as i32;
+/// The maximum number of frames that will be dropped after seek
+const MAX_SKIP_FRAMES: u8 = 5;
+/// The number of audio frames that have bee dropped after seek
+static AUDIO_SKIPPED_FRAMES: AtomicU8 = AtomicU8::new(u8::MAX);
+/// The number of Video frames that have been dropped after seek
+static VIDEO_SKIPPED_FRAMES: AtomicU8 = AtomicU8::new(u8::MAX);
 
 pub struct MediaDecoder {
     stop_flag: Arc<AtomicBool>,
     audio_seek_to: Arc<AtomicI64>,
     video_seek_to: Arc<AtomicI64>,
-    subtitle_seek_to: Arc<AtomicI64>,
 }
 
 impl MediaDecoder {
@@ -51,25 +55,16 @@ impl MediaDecoder {
         let stop_flag = Arc::new(AtomicBool::new(false));
         let audio_seek_to = Arc::new(AtomicI64::new(-1));
         let video_seek_to = Arc::new(AtomicI64::new(-1));
-        let subtitle_seek_to = Arc::new(AtomicI64::new(-1));
 
         let ctx = MediaDecoder::get_media_context(&path)?;
         let streams = Self::get_streams(&ctx);
 
-        Self::start_task(
-            ctx,
-            streams,
-            &stop_flag,
-            &audio_seek_to,
-            &video_seek_to,
-            &subtitle_seek_to,
-        );
+        Self::start_task(ctx, streams, &stop_flag, &audio_seek_to, &video_seek_to);
 
         Ok(Self {
             stop_flag,
             video_seek_to: video_seek_to.clone(),
             audio_seek_to: audio_seek_to.clone(),
-            subtitle_seek_to: subtitle_seek_to.clone(),
         })
     }
 
@@ -83,7 +78,6 @@ impl MediaDecoder {
 
         let vr = VIDEO_SUMMARY.read().unwrap();
         let ar = AUDIO_SUMMARY.read().unwrap();
-        let sr = SUBTITLE_SUMMARY.read().unwrap();
 
         if let Some(summary) = ar.as_ref() {
             let start = position / 1000 * summary.timebase_inverse as i64;
@@ -92,10 +86,6 @@ impl MediaDecoder {
         if let Some(summary) = vr.as_ref() {
             let start = position / 1000 * summary.timebase_inverse as i64;
             self.video_seek_to.store(start, Ordering::Release);
-        }
-        if let Some(summary) = sr.as_ref() {
-            // let start = position / 1000 * summary.timebase_inverse as i64;
-            // self.subtitle_seek_to.store(start, Ordering::Release);
         }
     }
 
@@ -109,13 +99,11 @@ impl MediaDecoder {
         stop_flag: &Arc<AtomicBool>,
         audio_seek_to: &Arc<AtomicI64>,
         video_seek_to: &Arc<AtomicI64>,
-        subtitle_seek_to: &Arc<AtomicI64>,
     ) {
         let mut ctx = ctx;
         let stop_flag = stop_flag.clone();
         let audio_seek_to = audio_seek_to.clone();
         let video_seek_to = video_seek_to.clone();
-        let subtitle_seek_to = subtitle_seek_to.clone();
 
         let mut audio_stream = streams.audio_stream;
         let mut video_stream = streams.video_stream;
@@ -144,7 +132,12 @@ impl MediaDecoder {
                     };
 
                     if seeked {
+                        // Set the skip number to 0 to indicate some frames need to be dropped later
+                        AUDIO_SKIPPED_FRAMES.store(0, Ordering::Release);
+                        VIDEO_SKIPPED_FRAMES.store(0, Ordering::Release);
+                        // Clear old data
                         Self::clear_buffer();
+                        // Send seek finish status
                         safe_send(sender.send(EventMessage::SeekFinished));
                     }
 
@@ -215,6 +208,7 @@ impl MediaDecoder {
         }
 
         unsafe { av_seek_frame(ctx_ptr, stream_index, position, AVSEEK_FLAG_FRAME as i32) };
+
         seek_to.store(-1, Ordering::Release);
 
         return true;
@@ -230,6 +224,17 @@ impl MediaDecoder {
 
         match dctx.receive_frame() {
             Ok(mut frame) => {
+                // If value of SKIPPED_FRAMES is smaller than MAX_SKIP_FRAMES,
+                // seek action is did a moment before, current frame may not be the correct one,
+                // drop some frames to get the correct one.
+                // Once dropped frames reached the max number, stop dropping.
+                if AUDIO_SKIPPED_FRAMES.load(Ordering::Acquire) < MAX_SKIP_FRAMES {
+                    AUDIO_SKIPPED_FRAMES.fetch_add(1, Ordering::SeqCst);
+                    return dctx;
+                } else {
+                    AUDIO_SKIPPED_FRAMES.store(u8::MAX, Ordering::Release);
+                }
+
                 let mut audio_frame = sample_format::parse_audio_frame(&mut frame);
 
                 // Push frame to buffer until succeeded
@@ -256,6 +261,18 @@ impl MediaDecoder {
 
         match dctx.receive_frame() {
             Ok(frame) => {
+                // If value of SKIPPED_FRAMES is smaller than MAX_SKIP_FRAMES,
+                // seek action is did a moment before, current frame may not be the correct one,
+                // drop some frames to get the correct one.
+                // Once dropped frames reached the max number, stop dropping.
+                if VIDEO_SKIPPED_FRAMES.load(Ordering::Acquire) < MAX_SKIP_FRAMES {
+                    VIDEO_SKIPPED_FRAMES.fetch_add(1, Ordering::SeqCst);
+                    return dctx;
+                } else {
+                    VIDEO_SKIPPED_FRAMES.store(u8::MAX, Ordering::Release);
+                }
+
+                debug!("original frame pts: {}", frame.pts);
                 let mut vf = parse_video_frame(&frame);
                 // Push frame to buffer until succeeded
                 while let Err(f) = VIDEO_BUFFER.push(vf) {

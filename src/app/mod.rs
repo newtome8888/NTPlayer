@@ -2,7 +2,7 @@ mod system_events;
 
 use log::debug;
 use sdl2::{image::InitFlag, AudioSubsystem, Sdl};
-use std::{sync::atomic::Ordering, time::Duration};
+use std::{sync::atomic::Ordering, time::Duration, thread};
 
 use crate::{
     entity::{EventMessage, PlayData},
@@ -106,10 +106,6 @@ impl NtApp {
                             let start = pts + FR_STEP;
 
                             if start as u64 > summary.duration_millis {
-                                debug!(
-                                    "start: {} is larger than duration: {}, stop decoder",
-                                    start, summary.duration
-                                );
                                 decoder.stop();
                                 player.stop();
                             } else {
@@ -121,9 +117,10 @@ impl NtApp {
                     EventMessage::Rewind => {
                         debug!("rewind");
                         if let (Some(player), Some(decoder)) = (player.as_mut(), decoder.as_mut()) {
-                            let pts = GLOBAL_PTS_MILLIS.load(Ordering::Acquire);
-                            let start = pts - FR_STEP;
+                            let adjust_diff = 2000;
 
+                            let pts = GLOBAL_PTS_MILLIS.load(Ordering::Acquire);
+                            let start = pts - FR_STEP - adjust_diff;
                             player.seeking();
                             decoder.seek_to(start);
                         }
