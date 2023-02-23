@@ -12,13 +12,14 @@ pub fn handle_result<T>(result: Result<T, SuperError>) -> Option<T> {
     match result {
         Ok(t) => Some(t),
         Err(e) => {
-            handle_send_result(EVENT_CHANNEL.0.send(EventMessage::ShowError(e.to_string())));
+            safe_send(EVENT_CHANNEL.0.send(EventMessage::ShowError(e.to_string())));
             None
         }
     }
 }
 
-pub fn handle_send_result<T>(result: Result<(), SendError<T>>) {
+/// Send event message, if any error occurred during sending, log the error
+pub fn safe_send<T>(result: Result<(), SendError<T>>) {
     if let Err(err) = result {
         error!("{}", err);
     }

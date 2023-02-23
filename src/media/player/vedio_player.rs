@@ -10,9 +10,11 @@ use std::{
 
 use crate::{
     entity::EventMessage,
-    global::{AUDIO_PTS_MILLIS, EVENT_CHANNEL, MEDIA_TIMESTAMP_SYNC_DIFF, VIDEO_BUFFER, VIDEO_SUMMARY},
+    global::{
+        EVENT_CHANNEL, GLOBAL_PTS_MILLIS, MEDIA_TIMESTAMP_SYNC_DIFF, VIDEO_BUFFER, VIDEO_SUMMARY,
+    },
     media::decoder::VideoSummary,
-    util::error::{handle_send_result, SuperError},
+    util::error::{safe_send, SuperError},
 };
 
 use super::traits::Player;
@@ -69,9 +71,13 @@ impl VideoPlayer {
                         // do nothing and continue loop
                         State::ReadyToPause => {
                             state.store(State::Paused);
+                            thread::sleep(sleep_duration);
                             continue;
                         }
-                        State::Paused => continue,
+                        State::Paused => {
+                            thread::sleep(sleep_duration);
+                            continue;
+                        }
                         // Ready to play or already playing, just go on
                         State::ReadyToPlay | State::ReadyToResume => {
                             state.store(State::Playing);
@@ -79,34 +85,58 @@ impl VideoPlayer {
                         State::Playing => {
                             // go on
                         }
+                        State::Seeking => {
+                            debug!("Seeking 1");
+                            thread::sleep(sleep_duration);
+                            continue;
+                        }
+                        State::SeekFinished => {
+                            debug!("Seek finished");
+                            state.store(State::Playing);
+                        }
                     }
 
                     // Play video
                     if let Some(frame) = VIDEO_BUFFER.pop() {
                         let frame = Arc::new(frame);
-                        if (AUDIO_PTS_MILLIS.load(Ordering::Acquire) - frame.pts_millis)
-                            > MEDIA_TIMESTAMP_SYNC_DIFF
-                        {
+                        let mut global_pts = GLOBAL_PTS_MILLIS.load(Ordering::Acquire);
+
+                        if (global_pts - frame.pts_millis) > MEDIA_TIMESTAMP_SYNC_DIFF {
                             // Audio pts > video pts, skip this frame to catch up the audio timestamp
-                            debug!("Audio pts exceeded video timestamp out of range, skip current video frame");
                             // Here we want to skip to spcified position rapidly, so don't sleep
+                            debug!("Audio pts exceeded video timestamp out of range, skip current video frame");
                             continue;
                         } else {
-                            while (AUDIO_PTS_MILLIS.load(Ordering::Acquire) - frame.pts_millis)
-                                < -MEDIA_TIMESTAMP_SYNC_DIFF
-                            {
+                            while (global_pts - frame.pts_millis) < -MEDIA_TIMESTAMP_SYNC_DIFF {
+                                let state_value = state.load();
+                                debug!("state value: {:?}", state_value);
+                                if state_value == State::Seeking
+                                    || state_value == State::SeekFinished
+                                    || global_pts == -1
+                                {
+                                    debug!("seeking2");
+                                    // state has been changed to seeking or seeking already finished,
+                                    // old buffer has been cleared,
+                                    // jump out of current loop to accept new frame in next loop
+                                    break;
+                                }
+
                                 // Audio pts < video pts, repeate send current frame to wait for audio timestamp
-                                debug!("Audio pts delay of video timestamp out of range, repeat current frame");
-                                let result = sender.send(EventMessage::RenderVideo(frame.clone()));
-                                handle_send_result(result);
+                                debug!("Audio pts delay of video timestamp out of range, repeat current frame.");
+                                debug!(
+                                    "Audio pts: {}, video pts: {}",
+                                    global_pts, frame.pts_millis
+                                );
+                                let frame1 = frame.clone();
+                                safe_send(sender.send(EventMessage::RenderVideo(frame1)));
 
                                 thread::sleep(sleep_duration);
+                                global_pts = GLOBAL_PTS_MILLIS.load(Ordering::Acquire);
                             }
                         }
 
                         // Send video data to UI
-                        let result = sender.send(EventMessage::RenderVideo(frame.clone()));
-                        handle_send_result(result);
+                        safe_send(sender.send(EventMessage::RenderVideo(frame.clone())));
 
                         thread::sleep(sleep_duration);
                     }
@@ -144,6 +174,14 @@ impl Player for VideoPlayer {
     fn fast_rewind(&mut self) {
         todo!();
     }
+
+    fn seeking(&mut self) {
+        self.state.store(State::Seeking);
+    }
+
+    fn seek_finished(&mut self) {
+        self.state.store(State::SeekFinished);
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -151,6 +189,8 @@ enum State {
     Playing,
     Paused,
     Stopped,
+    Seeking,
+    SeekFinished,
 
     ReadyToPlay,
     ReadyToPause,

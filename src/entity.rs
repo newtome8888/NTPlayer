@@ -17,6 +17,9 @@ pub enum EventMessage{
     Forward,
     Rewind,
 
+    // Indicate that forward or rewind operation has been completed
+    SeekFinished,
+
     // File
     FileOpened(FileOpenedData),
     DirOpened(DirOpenedData),
@@ -26,8 +29,13 @@ pub enum EventMessage{
     RenderAudio(AudioFrame),
     RenderSubtitle(Arc<SubtitleFrame>),
 
+    // UI layout
     Resize((u32, u32)),
     SetPosition{x:WindowPos, y:WindowPos},
+
+    // Volume control
+    UpVolume,
+    DownVolume,
 }
 
 pub struct PlayData {

@@ -2,7 +2,7 @@ use crossbeam::channel::unbounded;
 
 use sdl2::pixels::Color;
 use static_init::dynamic;
-use std::{sync::{atomic::{AtomicI64, AtomicI16}, RwLock}};
+use std::{sync::{atomic::{AtomicI64, AtomicI16}, RwLock}, mem::MaybeUninit};
 
 use crate::{
     media::decoder::{AudioBuffer, SubtitleBuffer, VideoBuffer, AudioSummary, VideoSummary, SubtitleSummary},
@@ -30,18 +30,23 @@ pub const INIT_HEIGHT: u32 = 608;
 //
 /// Unit: milliseconds
 pub const MEDIA_TIMESTAMP_SYNC_DIFF: i64 = 200;
-/// Unit: milliseconds
-pub const FORWARD_REWIND_AMOUNT: i64 = 10000;
+/// Forward or rewind amount each time, Unit: milliseconds
+pub const FR_STEP: i64 = 10000;
 /// Maximum number of frames that can be hold in `AUDIO_SUMMARY` and `VIDEO_SUMMARY`
 const MEDIA_BUFFER_SIZE: usize = 10;
 /// Global volume, modify this value will affect to the play volume
 pub static VOLUME: AtomicI16 = AtomicI16::new(50);
 pub static VOLUME_STEP: i16 = 10;
+pub const MAX_VOLUME: i16 = 5000;
+pub const VOLUME_BENCHMARK: f32 = 50.0;
 /// Global play timestamp, unit milliseconds+
-pub static AUDIO_PTS_MILLIS: AtomicI64 = AtomicI64::new(0);
+pub static GLOBAL_PTS_MILLIS: AtomicI64 = AtomicI64::new(0);
 pub static AUDIO_SUMMARY: RwLock<Option<AudioSummary>> = RwLock::new(None);
 pub static VIDEO_SUMMARY: RwLock<Option<VideoSummary>> = RwLock::new(None);
 pub static SUBTITLE_SUMMARY: RwLock<Option<SubtitleSummary>> = RwLock::new(None);
+
+pub type EventSender = Sender<EventMessage>;
+pub type EventReceiver = Receiver<EventMessage>;
 
 //
 //
@@ -49,8 +54,6 @@ pub static SUBTITLE_SUMMARY: RwLock<Option<SubtitleSummary>> = RwLock::new(None)
 //
 //
 
-pub type EventSender = Sender<EventMessage>;
-pub type EventReceiver = Receiver<EventMessage>;
 #[dynamic]
 pub static EVENT_CHANNEL: (EventSender, EventReceiver) = unbounded();
 #[dynamic]

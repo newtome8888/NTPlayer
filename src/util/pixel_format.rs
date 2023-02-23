@@ -55,8 +55,8 @@ pub fn parse_video_frame(frame: &AVFrame) -> VideoFrame {
                 width,
                 height,
                 pts: frame.pts,
-                pts_millis: 1000 * frame.pts * summary.time_base_num as i64
-                    / summary.time_base_den as i64,
+                pts_millis: 1000 * frame.pts * summary.timebase_num as i64
+                    / summary.timebase_den as i64,
             }
         }
         // AVPixelFormat_AV_PIX_FMT_ABGR => {}

@@ -61,8 +61,8 @@ pub fn load_logger(level: LevelFilter) -> Option<Handle> {
 }
 
 fn get_log_format(level:LevelFilter) -> &'static str{
-    let simple_format = "{h({l})} {d(%Y-%m-%d %H:%M:%S)}:   {m}{n}\n";
-    let full_format = "{h({l})} {d(%Y-%m-%d %H:%M:%S)} [{f}:{L}] {M}:    {m}{n}\n";
+    let simple_format = "{h({l})} {d(%Y-%m-%d %H:%M:%S:%s)}:   {m}{n}\n";
+    let full_format = "{h({l})} {d(%Y-%m-%d %H:%M:%S:%s)} [{f}:{L}] {M}:    {m}{n}\n";
 
     match level {
         LevelFilter::Off => "",

@@ -1,4 +1,3 @@
-use log::debug;
 use sdl2::{
     audio::{AudioCallback, AudioQueue, AudioSpecDesired},
     AudioSubsystem,
@@ -26,7 +25,6 @@ impl Sounder {
     }
 
     pub fn play_sound(&self, frame: AudioFrame) -> Result<(), SuperError> {
-        debug!("audio data: {:?}", frame.data);
         self.device.queue_audio(&frame.data)?;
         self.device.resume();
 

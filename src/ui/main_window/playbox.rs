@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
-use log::{debug, info, warn};
-use rsmpeg::ffi::AVPixelFormat_AV_PIX_FMT_YUV420P;
+use log::{debug, warn};
+use rsmpeg::ffi::AVPixelFormat_AV_PIX_FMT_YUV420P as AVPIXELFORMAT_AV_PIX_FMT_YUV420P;
 use sdl2::{pixels::PixelFormatEnum, rect::Rect, render::Texture, video::WindowPos};
 // use tracing::{info, warn};
 
 use crate::{
     entity::EventMessage, global::EVENT_CHANNEL, media::decoder::VideoFrame,
-    util::error::{SuperError, handle_send_result},
+    util::error::{SuperError, safe_send},
 };
 
 use super::global::{CANVAS, TEXTURE_CREATOR};
@@ -60,7 +60,7 @@ impl PlayBox {
             y: WindowPos::Centered,
         });
 
-        handle_send_result(result);
+        safe_send(result);
 
         Ok(())
     }
@@ -76,7 +76,7 @@ impl PlayBox {
 
         let frame = self.frame.as_ref().unwrap();
         match frame.format {
-            AVPixelFormat_AV_PIX_FMT_YUV420P => {
+            AVPIXELFORMAT_AV_PIX_FMT_YUV420P => {
                 let data = &frame.data;
                 let ypitch = frame.width;
                 let upitch = frame.width / 2;

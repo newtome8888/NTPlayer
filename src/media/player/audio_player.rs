@@ -2,7 +2,7 @@ use crossbeam::atomic::AtomicCell;
 use log::info;
 use std::{
     cell::Cell,
-    sync::Arc,
+    sync::{atomic::Ordering, Arc},
     thread::{self, JoinHandle},
     time::Duration,
 };
@@ -10,8 +10,8 @@ use std::{
 use super::traits::Player;
 use crate::{
     entity::EventMessage,
-    global::{AUDIO_BUFFER, AUDIO_PTS_MILLIS, AUDIO_SUMMARY, EVENT_CHANNEL},
-    util::error::{handle_send_result, SuperError},
+    global::{AUDIO_BUFFER, AUDIO_SUMMARY, EVENT_CHANNEL, GLOBAL_PTS_MILLIS},
+    util::error::{safe_send, SuperError},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19,6 +19,8 @@ enum State {
     Playing,
     Paused,
     Stopped,
+    Seeking,
+    SeekFinished,
 
     ReadyToPlay,
     ReadyToPause,
@@ -78,9 +80,13 @@ impl AudioPlayer {
                     // do nothing and continue loop
                     State::ReadyToPause => {
                         state.store(State::Paused);
+                        thread::sleep(sleep_duration);
                         continue;
                     }
-                    State::Paused => continue,
+                    State::Paused => {
+                        thread::sleep(sleep_duration);
+                        continue;
+                    }
                     // Ready to play or already playing, just go on
                     State::ReadyToPlay | State::ReadyToResume => {
                         state.store(State::Playing);
@@ -88,15 +94,21 @@ impl AudioPlayer {
                     State::Playing => {
                         // go on
                     }
+                    State::Seeking => {
+                        GLOBAL_PTS_MILLIS.store(-1, Ordering::Release);
+                        thread::sleep(sleep_duration);
+                        continue;
+                    }
+                    State::SeekFinished => {
+                        state.store(State::Playing);
+                    },
                 }
 
                 // Play audio
                 if let Some(frame) = AUDIO_BUFFER.pop() {
                     // Update timestamp of playing
-                    AUDIO_PTS_MILLIS.store(frame.pts_millis, std::sync::atomic::Ordering::Release);
-
-                    let result = EVENT_CHANNEL.0.send(EventMessage::RenderAudio(frame));
-                    handle_send_result(result);
+                    GLOBAL_PTS_MILLIS.store(frame.pts_millis, Ordering::Release);
+                    safe_send(EVENT_CHANNEL.0.send(EventMessage::RenderAudio(frame)));
                 }
 
                 thread::sleep(sleep_duration);
@@ -132,5 +144,13 @@ impl Player for AudioPlayer {
 
     fn fast_rewind(&mut self) {
         todo!();
+    }
+
+    fn seeking(&mut self) {
+        self.state.store(State::Seeking);
+    }
+
+    fn seek_finished(&mut self) {
+        self.state.store(State::SeekFinished);
     }
 }

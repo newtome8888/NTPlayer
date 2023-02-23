@@ -16,46 +16,87 @@ use rsmpeg::{
     avcodec::{AVCodec, AVCodecContext, AVPacket},
     avformat::AVFormatContextInput,
     ffi::{
+        av_seek_frame, AVFormatContext,
         AVMediaType_AVMEDIA_TYPE_ATTACHMENT as AVMEDIATYPE_AVMEDIA_TYPE_ATTACHMENT,
         AVMediaType_AVMEDIA_TYPE_AUDIO as AVMEDIATYPE_AVMEDIA_TYPE_AUDIO,
         AVMediaType_AVMEDIA_TYPE_DATA as AVMEDIATYPE_AVMEDIA_TYPE_DATA,
         AVMediaType_AVMEDIA_TYPE_NB as AVMEDIATYPE_AVMEDIA_TYPE_NB,
         AVMediaType_AVMEDIA_TYPE_SUBTITLE as AVMEDIATYPE_AVMEDIA_TYPE_SUBTITLE,
-        AVMediaType_AVMEDIA_TYPE_VIDEO as AVMEDIATYPE_AVMEDIA_TYPE_VIDEO,
+        AVMediaType_AVMEDIA_TYPE_VIDEO as AVMEDIATYPE_AVMEDIA_TYPE_VIDEO, AVSEEK_FLAG_ANY,
+        AVSEEK_FLAG_BACKWARD, AVSEEK_FLAG_FRAME,
     },
 };
 
 use crate::{
+    entity::EventMessage,
     global::{
-        AUDIO_BUFFER, AUDIO_SUMMARY, SUBTITLE_BUFFER, SUBTITLE_SUMMARY, VIDEO_BUFFER, VIDEO_SUMMARY,
+        AUDIO_BUFFER, AUDIO_SUMMARY, EVENT_CHANNEL, FR_STEP, GLOBAL_PTS_MILLIS,
+        MEDIA_TIMESTAMP_SYNC_DIFF, SUBTITLE_BUFFER, SUBTITLE_SUMMARY, VIDEO_BUFFER, VIDEO_SUMMARY,
     },
-    util::{pixel_format::parse_video_frame, sample_format},
+    util::{error::safe_send, pixel_format::parse_video_frame, sample_format},
 };
 
 const BUFFER_FULL_SLEEP_DURATION: Duration = Duration::from_millis(200);
+const SEEK_FLAG: i32 = AVSEEK_FLAG_BACKWARD as i32;
 
 pub struct MediaDecoder {
     stop_flag: Arc<AtomicBool>,
-    seek_to: Arc<AtomicI64>,
+    audio_seek_to: Arc<AtomicI64>,
+    video_seek_to: Arc<AtomicI64>,
+    subtitle_seek_to: Arc<AtomicI64>,
 }
 
 impl MediaDecoder {
     pub fn new(path: &str) -> Result<Self, Box<dyn Error>> {
         let stop_flag = Arc::new(AtomicBool::new(false));
-        let seek_to = Arc::new(AtomicI64::new(-1));
+        let audio_seek_to = Arc::new(AtomicI64::new(-1));
+        let video_seek_to = Arc::new(AtomicI64::new(-1));
+        let subtitle_seek_to = Arc::new(AtomicI64::new(-1));
 
         let ctx = MediaDecoder::get_media_context(&path)?;
         let streams = Self::get_streams(&ctx);
 
-        Self::start_task(ctx, streams, &stop_flag, &seek_to);
+        Self::start_task(
+            ctx,
+            streams,
+            &stop_flag,
+            &audio_seek_to,
+            &video_seek_to,
+            &subtitle_seek_to,
+        );
 
-        Ok(Self { stop_flag, seek_to })
+        Ok(Self {
+            stop_flag,
+            video_seek_to: video_seek_to.clone(),
+            audio_seek_to: audio_seek_to.clone(),
+            subtitle_seek_to: subtitle_seek_to.clone(),
+        })
     }
 
     /// Seek to the specified position
-    /// `position` is the position to seek to, unit microseconds
+    /// `position` is the position to seek to, unit: milliseconds
     pub fn seek_to(&mut self, position: i64) {
-        self.seek_to.store(position, Ordering::SeqCst);
+        let mut position = position;
+        if position < 0 {
+            position = 0;
+        }
+
+        let vr = VIDEO_SUMMARY.read().unwrap();
+        let ar = AUDIO_SUMMARY.read().unwrap();
+        let sr = SUBTITLE_SUMMARY.read().unwrap();
+
+        if let Some(summary) = ar.as_ref() {
+            let start = position / 1000 * summary.timebase_inverse as i64;
+            self.audio_seek_to.store(start, Ordering::Release);
+        }
+        if let Some(summary) = vr.as_ref() {
+            let start = position / 1000 * summary.timebase_inverse as i64;
+            self.video_seek_to.store(start, Ordering::Release);
+        }
+        if let Some(summary) = sr.as_ref() {
+            // let start = position / 1000 * summary.timebase_inverse as i64;
+            // self.subtitle_seek_to.store(start, Ordering::Release);
+        }
     }
 
     pub fn stop(&mut self) {
@@ -66,11 +107,15 @@ impl MediaDecoder {
         ctx: AVFormatContextInput,
         streams: MediaStreams,
         stop_flag: &Arc<AtomicBool>,
-        seek_to: &Arc<AtomicI64>,
+        audio_seek_to: &Arc<AtomicI64>,
+        video_seek_to: &Arc<AtomicI64>,
+        subtitle_seek_to: &Arc<AtomicI64>,
     ) {
         let mut ctx = ctx;
         let stop_flag = stop_flag.clone();
-        let seek_to = seek_to.clone();
+        let audio_seek_to = audio_seek_to.clone();
+        let video_seek_to = video_seek_to.clone();
+        let subtitle_seek_to = subtitle_seek_to.clone();
 
         let mut audio_stream = streams.audio_stream;
         let mut video_stream = streams.video_stream;
@@ -78,36 +123,29 @@ impl MediaDecoder {
         let data_stream = streams.data_stream;
         let attachment_stream = streams.attachment_stream;
         let nb_stream = streams.nb_stream;
+        let sender = &EVENT_CHANNEL.0;
         thread::spawn({
             move || {
+                let ctx_ptr = ctx.as_mut_ptr();
                 loop {
                     if stop_flag.load(std::sync::atomic::Ordering::SeqCst) {
                         debug!("stop flag setted, stop thread now");
                         break;
                     }
 
-                    let position = seek_to.load(Ordering::SeqCst);
-                    if position >= 0 {
-                        debug!("seek to position {}", position);
-                        // If seek_to is not negative,
-                        // clear the buffers
-                        while !AUDIO_BUFFER.is_empty() {
-                            AUDIO_BUFFER.pop();
-                        }
+                    let seeked = if let Some(index) = &video_stream.index {
+                        // If current media is stream, seek with video stream
+                        Self::seek_to_stream(ctx_ptr, &video_seek_to, *index)
+                    } else if let Some(index) = &audio_stream.index {
+                        // Otherwise, seek with audio stream
+                        Self::seek_to_stream(ctx_ptr, &audio_seek_to, *index)
+                    } else {
+                        false
+                    };
 
-                        while !VIDEO_BUFFER.is_empty() {
-                            VIDEO_BUFFER.pop();
-                        }
-
-                        while !SUBTITLE_BUFFER.is_empty() {
-                            SUBTITLE_BUFFER.pop();
-                        }
-
-                        
-                        // Finally seek to the new position
-                        // todo!
-
-                        seek_to.store(-1, Ordering::SeqCst);
+                    if seeked {
+                        Self::clear_buffer();
+                        safe_send(sender.send(EventMessage::SeekFinished));
                     }
 
                     if AUDIO_BUFFER.is_full() || VIDEO_BUFFER.is_full() || SUBTITLE_BUFFER.is_full()
@@ -163,8 +201,23 @@ impl MediaDecoder {
                 }
             }
         });
+    }
 
-        debug!("thread finished");
+    #[inline]
+    fn seek_to_stream(
+        ctx_ptr: *mut AVFormatContext,
+        seek_to: &Arc<AtomicI64>,
+        stream_index: i32,
+    ) -> bool {
+        let position = seek_to.load(Ordering::Acquire);
+        if position < 0 {
+            return false;
+        }
+
+        unsafe { av_seek_frame(ctx_ptr, stream_index, position, AVSEEK_FLAG_FRAME as i32) };
+        seek_to.store(-1, Ordering::Release);
+
+        return true;
     }
 
     // Notice! The context should be returned to return back the ownership
@@ -268,9 +321,11 @@ impl MediaDecoder {
 
             let duration = stream.duration as u64;
             let frames = stream.nb_frames as u64;
-            let time_base_num = stream.time_base.num as u64;
-            let time_base_den = stream.time_base.den as u64;
-            let play_interval = 1000 * duration * time_base_num / time_base_den / frames;
+            let timebase_num = stream.time_base.num as u64;
+            let timebase_den = stream.time_base.den as u64;
+            let timebase_inverse = timebase_den / timebase_num;
+            let duration_millis = 1000 * duration / timebase_inverse;
+            let play_interval = duration_millis / frames;
 
             match codec_type {
                 AVMEDIATYPE_AVMEDIA_TYPE_AUDIO => {
@@ -278,9 +333,11 @@ impl MediaDecoder {
                     let audio_summary = Some(AudioSummary {
                         decoder_name,
                         duration,
+                        duration_millis,
                         frames,
-                        time_base_num,
-                        time_base_den,
+                        timebase_num,
+                        timebase_den,
+                        timebase_inverse,
                         play_interval,
                         channels: codecpar.channels as u8,
                         channel_layout: codecpar.channel_layout,
@@ -297,9 +354,11 @@ impl MediaDecoder {
                     let video_summary = Some(VideoSummary {
                         decoder_name,
                         duration,
+                        duration_millis,
                         frames,
-                        time_base_num,
-                        time_base_den,
+                        timebase_num,
+                        timebase_den,
+                        timebase_inverse,
                         play_interval,
                         width: codecpar.width as u32,
                         height: codecpar.height as u32,
@@ -342,6 +401,20 @@ impl MediaDecoder {
             unknown_streams,
         }
     }
+
+    fn clear_buffer() {
+        while !AUDIO_BUFFER.is_empty() {
+            AUDIO_BUFFER.pop();
+        }
+
+        while !VIDEO_BUFFER.is_empty() {
+            VIDEO_BUFFER.pop();
+        }
+
+        while !SUBTITLE_BUFFER.is_empty() {
+            SUBTITLE_BUFFER.pop();
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -350,12 +423,16 @@ pub struct VideoSummary {
     pub decoder_name: String,
     /// The duration of whole media
     pub duration: u64,
+    /// Duration in milliseconds
+    pub duration_millis: u64,
     /// Number of frames in media
     pub frames: u64,
     /// Number of timebase
-    pub time_base_num: u64,
+    pub timebase_num: u64,
     /// Denominator of timebase
-    pub time_base_den: u64,
+    pub timebase_den: u64,
+    /// The reciprocal of timebase
+    pub timebase_inverse: u64,
     /// Play interval with milliseconds
     pub play_interval: u64,
     /// Width of video
@@ -370,12 +447,16 @@ pub struct AudioSummary {
     pub decoder_name: String,
     /// The duration of whole media
     pub duration: u64,
+    /// Duration in milliseconds
+    pub duration_millis: u64,
     /// Number of frames in media
     pub frames: u64,
     /// Number of timebase
-    pub time_base_num: u64,
+    pub timebase_num: u64,
     /// Denominator of timebase
-    pub time_base_den: u64,
+    pub timebase_den: u64,
+    /// The reciprocal of timebase
+    pub timebase_inverse: u64,
     /// Play interval with milliseconds
     pub play_interval: u64,
     /// Number of channels
