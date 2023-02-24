@@ -85,12 +85,10 @@ impl VideoPlayer {
                             // go on
                         }
                         State::Seeking => {
-                            debug!("Seeking 1");
                             thread::sleep(sleep_duration);
                             continue;
                         }
                         State::SeekFinished => {
-                            debug!("Video player seek finished");
                             state.store(State::Playing);
                         }
                     }
@@ -108,12 +106,10 @@ impl VideoPlayer {
                         } else {
                             while (global_pts - frame.pts_millis) < -MEDIA_TIMESTAMP_SYNC_DIFF {
                                 let state_value = state.load();
-                                debug!("state value: {:?}", state_value);
                                 if state_value == State::Seeking
                                     || state_value == State::SeekFinished
                                     || global_pts == -1
                                 {
-                                    debug!("seeking2");
                                     // state has been changed to seeking or seeking already finished,
                                     // old buffer has been cleared,
                                     // jump out of current loop to accept new frame in next loop

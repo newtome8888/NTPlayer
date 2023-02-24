@@ -26,7 +26,10 @@ use crossbeam::channel::{Receiver, Sender};
 //
 pub const APP_NAME: &str = "NT Player";
 pub const LOGO_PATH: &str = "./assets/logo.png";
-pub const DEFAULT_BACKGROUND_COLOR: Color = Color::RGB(40, 40, 40);
+/// Background color for start window
+pub const START_BACKGROUND_COLOR: Color = Color::RGB(230, 230, 230);
+/// Background color for video window
+pub const VIDEO_BACKGROUND_COLOR: Color = Color::RGB(40, 40, 40);
 pub const INIT_WIDTH: u32 = 1024;
 pub const INIT_HEIGHT: u32 = 608;
 
@@ -34,11 +37,11 @@ pub const INIT_HEIGHT: u32 = 608;
 // Media related
 //
 /// Unit: milliseconds
-pub const MEDIA_TIMESTAMP_SYNC_DIFF: i64 = 200;
+pub const MEDIA_TIMESTAMP_SYNC_DIFF: i64 = 600;
 /// Forward or rewind amount each time, Unit: milliseconds
 pub const FR_STEP: i64 = 10000;
 /// Maximum number of frames that can be hold in `AUDIO_SUMMARY` and `VIDEO_SUMMARY`
-const MEDIA_BUFFER_SIZE: usize = 10;
+const MEDIA_BUFFER_SIZE: usize = 15;
 /// Global volume, modify this value will affect to the play volume
 pub static VOLUME: AtomicI16 = AtomicI16::new(50);
 pub static VOLUME_STEP: i16 = 10;

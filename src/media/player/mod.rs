@@ -23,7 +23,7 @@ impl MediaPlayer {
         let audio_player = &mut self.audio_player;
         let video_player = &mut self.video_player;
 
-        audio_player.start();
+        audio_player.start()?;
         video_player.start()?;
 
         Ok(())

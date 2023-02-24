@@ -39,7 +39,7 @@ pub enum EventMessage{
 }
 
 pub struct PlayData {
-    pub path: &'static str,
+    pub path: PathBuf,
 }
 
 pub struct MediaSelectedData {
@@ -51,7 +51,7 @@ pub struct MediaItemDoubleClickedData {
 }
 
 pub struct FileOpenedData{
-    pub path: &'static str,
+    pub path: PathBuf,
 }
 
 pub struct DirOpenedData {

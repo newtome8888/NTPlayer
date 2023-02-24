@@ -1,8 +1,8 @@
 mod system_events;
 
 use log::debug;
-use sdl2::{image::InitFlag, AudioSubsystem, Sdl};
-use std::{sync::atomic::Ordering, time::Duration, thread};
+use sdl2::{image::InitFlag, AudioSubsystem, Sdl, VideoSubsystem};
+use std::{sync::atomic::Ordering, time::Duration};
 
 use crate::{
     entity::{EventMessage, PlayData},
@@ -15,16 +15,19 @@ use crate::{
         player::{traits::Player, MediaPlayer},
     },
     sound::Sounder,
-    ui::{components::dialog::show_error, main_window::MainWindow},
+    ui::{components::dialog::show_error, start_window::StartWindow, video_window::VideoWindow},
     util::error::{handle_result, safe_send, SuperError},
 };
 
 use self::system_events::SdlEvents;
+pub use self::system_events::{MouseMotionParameters, MouseUpParameters};
 
 pub struct NtApp {
     sdl_context: Sdl,
     audio_subsystem: AudioSubsystem,
-    main_window: MainWindow,
+    video_subsystem: VideoSubsystem,
+    start_window: StartWindow,
+    video_window: Option<VideoWindow>,
 }
 
 impl NtApp {
@@ -33,12 +36,15 @@ impl NtApp {
         let sdl_context = sdl2::init()?;
         let video_subsystem = sdl_context.video()?;
         let audio_subsystem = sdl_context.audio()?;
-        let wind = MainWindow::new(&video_subsystem)?;
+        let start_wind = StartWindow::new(&video_subsystem)?;
+        // let video_wind = VideoWindow::new(&video_subsystem)?;
 
         Ok(Self {
             sdl_context,
             audio_subsystem,
-            main_window: wind,
+            video_subsystem,
+            start_window: start_wind,
+            video_window: None,
         })
     }
 
@@ -50,18 +56,24 @@ impl NtApp {
         let mut player: Option<MediaPlayer> = None;
         let mut sounder: Option<Sounder> = None;
 
-        sender.send(EventMessage::Play(PlayData {
-            path: r"E:\Movie\三体\[www.dbmp4.com]三体.EP07.HD1080p.mp4",
-        }));
         loop {
-            if sdl_eventer.handle_events()? == MainLoopState::Quit {
+            if sdl_eventer.handle_events(&mut self.start_window, &mut self.video_window)?
+                == MainLoopState::Quit
+            {
                 break;
             }
 
             if let Ok(m) = receiver.recv_timeout(Duration::from_millis(50)) {
                 match m {
                     EventMessage::Play(data) => {
-                        let mut md = MediaDecoder::new(data.path)?;
+                        if self.video_window.is_none() {
+                            let wind = VideoWindow::new(&self.video_subsystem)?;
+                            self.video_window = Some(wind);
+                        }
+                        self.start_window.hide();
+                        self.video_window.as_mut().unwrap().show();
+
+                        let mut md = MediaDecoder::new(data.path.to_str().unwrap())?;
                         md.seek_to(0);
 
                         let mut plr = MediaPlayer::new();
@@ -97,7 +109,6 @@ impl NtApp {
                         }
                     }
                     EventMessage::Forward => {
-                        debug!("forward");
                         if let (Some(player), Some(decoder)) = (player.as_mut(), decoder.as_mut()) {
                             let r = VIDEO_SUMMARY.read().unwrap();
                             let summary = r.as_ref().unwrap();
@@ -135,7 +146,9 @@ impl NtApp {
                         show_error(msg.as_str());
                     }
                     EventMessage::RenderVideo(frame) => {
-                        self.main_window.update_video_frame(frame);
+                        if let Some(wind) = self.video_window.as_mut() {
+                            wind.update_video_frame(frame);
+                        }
                     }
                     EventMessage::RenderAudio(frame) => {
                         if let Some(sounder) = sounder.as_mut() {
@@ -145,10 +158,14 @@ impl NtApp {
                     }
                     EventMessage::RenderSubtitle(_) => todo!(), // Render video and sound
                     EventMessage::Resize((width, height)) => {
-                        self.main_window.resize(width, height)?;
+                        if let Some(wind) = self.video_window.as_mut() {
+                            wind.resize(width, height)?;
+                        }
                     }
                     EventMessage::SetPosition { x, y } => {
-                        self.main_window.set_position(x, y);
+                        if let Some(wind) = self.video_window.as_mut() {
+                            wind.set_position(x, y);
+                        }
                     }
                     EventMessage::UpVolume => {
                         let mut volume = VOLUME.load(Ordering::Acquire);
@@ -172,7 +189,9 @@ impl NtApp {
                 }
             }
 
-            self.main_window.redrawl()?;
+            if let Some(wind) = self.video_window.as_mut() {
+                wind.redrawl()?;
+            }
         }
 
         Ok(())

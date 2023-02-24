@@ -39,10 +39,6 @@ use crate::{
 const BUFFER_FULL_SLEEP_DURATION: Duration = Duration::from_millis(200);
 /// The maximum number of frames that will be dropped after seek
 const MAX_SKIP_FRAMES: u8 = 5;
-/// The number of audio frames that have bee dropped after seek
-static AUDIO_SKIPPED_FRAMES: AtomicU8 = AtomicU8::new(u8::MAX);
-/// The number of Video frames that have been dropped after seek
-static VIDEO_SKIPPED_FRAMES: AtomicU8 = AtomicU8::new(u8::MAX);
 
 pub struct MediaDecoder {
     stop_flag: Arc<AtomicBool>,
@@ -100,24 +96,29 @@ impl MediaDecoder {
         audio_seek_to: &Arc<AtomicI64>,
         video_seek_to: &Arc<AtomicI64>,
     ) {
-        let mut ctx = ctx;
         let stop_flag = stop_flag.clone();
         let audio_seek_to = audio_seek_to.clone();
         let video_seek_to = video_seek_to.clone();
-
-        let mut audio_stream = streams.audio_stream;
-        let mut video_stream = streams.video_stream;
-        let subtitle_stream = streams.subtitle_stream;
-        let data_stream = streams.data_stream;
-        let attachment_stream = streams.attachment_stream;
-        let nb_stream = streams.nb_stream;
         let sender = &EVENT_CHANNEL.0;
         thread::spawn({
             move || {
+                let mut audio_stream = streams.audio_stream;
+                let mut video_stream = streams.video_stream;
+                let subtitle_stream = streams.subtitle_stream;
+                let data_stream = streams.data_stream;
+                let attachment_stream = streams.attachment_stream;
+                let nb_stream = streams.nb_stream;
+
+                let mut ctx = ctx;
+                // The pointer of AVFormatContext
                 let ctx_ptr = ctx.as_mut_ptr();
+                // The number of audio frames that have bee dropped after seek
+                let mut audio_dropped_frames = u8::MAX;
+                // The number of Video frames that have been dropped after seek
+                let mut video_dropped_frames = u8::MAX;
+
                 loop {
                     if stop_flag.load(std::sync::atomic::Ordering::SeqCst) {
-                        debug!("stop flag setted, stop thread now");
                         break;
                     }
 
@@ -133,8 +134,8 @@ impl MediaDecoder {
 
                     if seeked {
                         // Set the skip number to 0 to indicate some frames need to be dropped later
-                        AUDIO_SKIPPED_FRAMES.store(0, Ordering::Release);
-                        VIDEO_SKIPPED_FRAMES.store(0, Ordering::Release);
+                        audio_dropped_frames = 0;
+                        video_dropped_frames = 0;
                         // Clear old data
                         Self::clear_buffer();
                         // Send seek finish status
@@ -156,7 +157,7 @@ impl MediaDecoder {
                                 audio_stream.decoder_ctx = audio_stream
                                     .decoder_ctx
                                     .and_then(|dctx| {
-                                        let dctx = Self::decode_audio(dctx, &packet);
+                                        let dctx = Self::decode_audio(dctx, &packet, &mut audio_dropped_frames);
                                         Some(dctx)
                                     })
                                     .or_else(|| {
@@ -167,7 +168,7 @@ impl MediaDecoder {
                                 video_stream.decoder_ctx = video_stream
                                     .decoder_ctx
                                     .and_then(|dctx| {
-                                        let dctx = Self::decode_video(dctx, &packet);
+                                        let dctx = Self::decode_video(dctx, &packet, &mut video_dropped_frames);
                                         Some(dctx)
                                     })
                                     .or_else(|| {
@@ -215,10 +216,10 @@ impl MediaDecoder {
     }
 
     // Notice! The context should be returned to return back the ownership
-    fn decode_audio(dctx: AVCodecContext, packet: &AVPacket) -> AVCodecContext {
+    fn decode_audio(dctx: AVCodecContext, packet: &AVPacket, dropped_frames: &mut u8) -> AVCodecContext {
         let mut dctx = dctx;
         if let Err(err) = dctx.send_packet(Some(packet)) {
-            debug!("send packet to context error: {}", err);
+            error!("send packet to context error: {}", err);
             return dctx;
         }
 
@@ -228,11 +229,11 @@ impl MediaDecoder {
                 // seek action is did a moment before, current frame may not be the correct one,
                 // drop some frames to get the correct one.
                 // Once dropped frames reached the max number, stop dropping.
-                if AUDIO_SKIPPED_FRAMES.load(Ordering::Acquire) < MAX_SKIP_FRAMES {
-                    AUDIO_SKIPPED_FRAMES.fetch_add(1, Ordering::SeqCst);
+                if *dropped_frames < MAX_SKIP_FRAMES {
+                    *dropped_frames += 1;
                     return dctx;
                 } else {
-                    AUDIO_SKIPPED_FRAMES.store(u8::MAX, Ordering::Release);
+                    *dropped_frames = u8::MAX;
                 }
 
                 let mut audio_frame = sample_format::parse_audio_frame(&mut frame);
@@ -244,7 +245,7 @@ impl MediaDecoder {
                 }
             }
             Err(err) => {
-                debug!("{}", err);
+                error!("{}", err);
             }
         }
 
@@ -252,10 +253,10 @@ impl MediaDecoder {
     }
 
     // Notice! The context should be returned to return back the ownership
-    fn decode_video(dctx: AVCodecContext, packet: &AVPacket) -> AVCodecContext {
+    fn decode_video(dctx: AVCodecContext, packet: &AVPacket, dropped_frames: &mut u8) -> AVCodecContext {
         let mut dctx = dctx;
         if let Err(err) = dctx.send_packet(Some(packet)) {
-            debug!("send packet to context error: {}", err);
+            error!("send packet to context error: {}", err);
             return dctx;
         }
 
@@ -265,14 +266,13 @@ impl MediaDecoder {
                 // seek action is did a moment before, current frame may not be the correct one,
                 // drop some frames to get the correct one.
                 // Once dropped frames reached the max number, stop dropping.
-                if VIDEO_SKIPPED_FRAMES.load(Ordering::Acquire) < MAX_SKIP_FRAMES {
-                    VIDEO_SKIPPED_FRAMES.fetch_add(1, Ordering::SeqCst);
+                if *dropped_frames < MAX_SKIP_FRAMES {
+                    *dropped_frames += 1;
                     return dctx;
                 } else {
-                    VIDEO_SKIPPED_FRAMES.store(u8::MAX, Ordering::Release);
+                    *dropped_frames = u8::MAX;
                 }
 
-                debug!("original frame pts: {}", frame.pts);
                 let mut vf = parse_video_frame(&frame);
                 // Push frame to buffer until succeeded
                 while let Err(f) = VIDEO_BUFFER.push(vf) {
@@ -281,7 +281,7 @@ impl MediaDecoder {
                 }
             }
             Err(err) => {
-                debug!("{}", err);
+                error!("{}", err);
             }
         }
 

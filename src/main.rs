@@ -1,5 +1,5 @@
 // Hide console window on Windows platform, never remove it
-#![windows_subsystem = "windows"]
+// #![windows_subsystem = "windows"]
 
 mod config;
 mod entity;
