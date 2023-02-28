@@ -26,26 +26,18 @@ use crossbeam::channel::{Receiver, Sender};
 //
 pub const APP_NAME: &str = "NT Player";
 pub const LOGO_PATH: &str = "./assets/logo.png";
-/// Background color for start window
-pub const START_BACKGROUND_COLOR: Color = Color::RGB(230, 230, 230);
-/// Background color for video window
-pub const VIDEO_BACKGROUND_COLOR: Color = Color::RGB(40, 40, 40);
 pub const INIT_WIDTH: u32 = 1024;
-pub const INIT_HEIGHT: u32 = 608;
+pub const INIT_HEIGHT: u32 = 768;
 
 //
 // Media related
 //
-/// Unit: milliseconds
-pub const MEDIA_TIMESTAMP_SYNC_DIFF: i64 = 600;
 /// Forward or rewind amount each time, Unit: milliseconds
 pub const FR_STEP: i64 = 10000;
-/// Maximum number of frames that can be hold in `AUDIO_SUMMARY` and `VIDEO_SUMMARY`
-const MEDIA_BUFFER_SIZE: usize = 15;
 /// Global volume, modify this value will affect to the play volume
 pub static VOLUME: AtomicI16 = AtomicI16::new(50);
 pub static VOLUME_STEP: i16 = 10;
-pub const MAX_VOLUME: i16 = 5000;
+pub const MAX_VOLUME: i16 = 2000;
 pub const VOLUME_BENCHMARK: f32 = 50.0;
 /// Global play timestamp, unit milliseconds+
 pub static GLOBAL_PTS_MILLIS: AtomicI64 = AtomicI64::new(0);
@@ -64,9 +56,13 @@ pub type EventReceiver = Receiver<EventMessage>;
 
 #[dynamic]
 pub static EVENT_CHANNEL: (EventSender, EventReceiver) = unbounded();
+// It's bettrer to give more buffers for audio, 
+// becuase humans are more sensitive to sound than video.
+// In other words, video frames can be exhausted before audio frames,
+// but not vice versa.
 #[dynamic]
-pub static AUDIO_BUFFER: AudioBuffer = AudioBuffer::new(MEDIA_BUFFER_SIZE);
+pub static AUDIO_BUFFER: AudioBuffer = AudioBuffer::new(50);
 #[dynamic]
-pub static VIDEO_BUFFER: VideoBuffer = VideoBuffer::new(MEDIA_BUFFER_SIZE);
+pub static VIDEO_BUFFER: VideoBuffer = VideoBuffer::new(10);
 #[dynamic]
-pub static SUBTITLE_BUFFER: SubtitleBuffer = SubtitleBuffer::new(MEDIA_BUFFER_SIZE);
+pub static SUBTITLE_BUFFER: SubtitleBuffer = SubtitleBuffer::new(5);

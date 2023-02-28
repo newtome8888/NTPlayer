@@ -1,18 +1,16 @@
 use crossbeam::atomic::AtomicCell;
-use log::{debug, info};
+use log::info;
 // use tracing::{info, debug};
 use std::{
     cell::Cell,
-    sync::{atomic::Ordering, Arc},
+    sync::Arc,
     thread::{self, JoinHandle},
     time::Duration,
 };
 
 use crate::{
     entity::EventMessage,
-    global::{
-        EVENT_CHANNEL, GLOBAL_PTS_MILLIS, MEDIA_TIMESTAMP_SYNC_DIFF, VIDEO_BUFFER, VIDEO_SUMMARY,
-    },
+    global::{EVENT_CHANNEL, VIDEO_BUFFER, VIDEO_SUMMARY},
     util::error::{safe_send, SuperError},
 };
 
@@ -53,9 +51,11 @@ impl VideoPlayer {
 
         let state = self.state.clone();
         let sleep_duration = Duration::from_millis(summary.play_interval);
-
         let tid = thread::spawn({
             move || {
+                const MAX_WAIT_COUNT: u8 = 2;
+                let mut wait_count: u8 = 0;
+
                 state.store(State::Playing);
                 loop {
                     // Check player state
@@ -95,43 +95,8 @@ impl VideoPlayer {
 
                     // Play video
                     if let Some(frame) = VIDEO_BUFFER.pop() {
-                        let frame = Arc::new(frame);
-                        let mut global_pts = GLOBAL_PTS_MILLIS.load(Ordering::Acquire);
-
-                        if (global_pts - frame.pts_millis) > MEDIA_TIMESTAMP_SYNC_DIFF {
-                            // Audio pts > video pts, skip this frame to catch up the audio timestamp
-                            // Here we want to skip to spcified position rapidly, so don't sleep
-                            debug!("Audio pts exceeded video timestamp out of range, skip current video frame");
-                            continue;
-                        } else {
-                            while (global_pts - frame.pts_millis) < -MEDIA_TIMESTAMP_SYNC_DIFF {
-                                let state_value = state.load();
-                                if state_value == State::Seeking
-                                    || state_value == State::SeekFinished
-                                    || global_pts == -1
-                                {
-                                    // state has been changed to seeking or seeking already finished,
-                                    // old buffer has been cleared,
-                                    // jump out of current loop to accept new frame in next loop
-                                    break;
-                                }
-
-                                // Audio pts < video pts, repeate send current frame to wait for audio timestamp
-                                debug!("Audio pts delay of video timestamp out of range, repeat current frame.");
-                                debug!(
-                                    "Audio pts: {}, video pts: {}",
-                                    global_pts, frame.pts_millis
-                                );
-                                let frame1 = frame.clone();
-                                safe_send(sender.send(EventMessage::RenderVideo(frame1)));
-
-                                thread::sleep(sleep_duration);
-                                global_pts = GLOBAL_PTS_MILLIS.load(Ordering::Acquire);
-                            }
-                        }
-
                         // Send video data to UI
-                        safe_send(sender.send(EventMessage::RenderVideo(frame.clone())));
+                        safe_send(sender.send(EventMessage::RenderVideo(frame)));
 
                         thread::sleep(sleep_duration);
                     }

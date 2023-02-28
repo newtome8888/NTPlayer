@@ -1,11 +1,11 @@
-mod system_events;
+mod sdl_events;
 
 use log::debug;
 use sdl2::{image::InitFlag, AudioSubsystem, Sdl, VideoSubsystem};
 use std::{sync::atomic::Ordering, time::Duration};
 
 use crate::{
-    entity::{EventMessage, PlayData},
+    entity::EventMessage,
     global::{
         AUDIO_SUMMARY, EVENT_CHANNEL, FR_STEP, GLOBAL_PTS_MILLIS, MAX_VOLUME, VIDEO_SUMMARY,
         VOLUME, VOLUME_STEP,
@@ -19,8 +19,7 @@ use crate::{
     util::error::{handle_result, safe_send, SuperError},
 };
 
-use self::system_events::SdlEvents;
-pub use self::system_events::{MouseMotionParameters, MouseUpParameters};
+use self::sdl_events::SdlEvents;
 
 pub struct NtApp {
     sdl_context: Sdl,
@@ -36,8 +35,8 @@ impl NtApp {
         let sdl_context = sdl2::init()?;
         let video_subsystem = sdl_context.video()?;
         let audio_subsystem = sdl_context.audio()?;
+
         let start_wind = StartWindow::new(&video_subsystem)?;
-        // let video_wind = VideoWindow::new(&video_subsystem)?;
 
         Ok(Self {
             sdl_context,
@@ -65,7 +64,9 @@ impl NtApp {
 
             if let Ok(m) = receiver.recv_timeout(Duration::from_millis(50)) {
                 match m {
-                    EventMessage::Play(data) => {
+                    EventMessage::Quit => break,
+                    EventMessage::Play(path) => {
+                        // If video window is not initialized yet, initialize it
                         if self.video_window.is_none() {
                             let wind = VideoWindow::new(&self.video_subsystem)?;
                             self.video_window = Some(wind);
@@ -73,7 +74,16 @@ impl NtApp {
                         self.start_window.hide();
                         self.video_window.as_mut().unwrap().show();
 
-                        let mut md = MediaDecoder::new(data.path.to_str().unwrap())?;
+                        // If the decoder is running, stop it first
+                        if let Some(mut decoder) = decoder {
+                            decoder.stop();
+                        }
+                        // if the player is running, stop it first
+                        if let Some(mut player) = player {
+                            player.stop();
+                        }
+
+                        let mut md = MediaDecoder::new(path.to_str().unwrap())?;
                         md.seek_to(0);
 
                         let mut plr = MediaPlayer::new();
@@ -126,7 +136,6 @@ impl NtApp {
                         }
                     }
                     EventMessage::Rewind => {
-                        debug!("rewind");
                         if let (Some(player), Some(decoder)) = (player.as_mut(), decoder.as_mut()) {
                             let adjust_diff = 2000;
 
@@ -136,8 +145,8 @@ impl NtApp {
                             decoder.seek_to(start);
                         }
                     }
-                    EventMessage::FileOpened(data) => {
-                        safe_send(sender.send(EventMessage::Play(PlayData { path: data.path })));
+                    EventMessage::FileOpened(path) => {
+                        safe_send(sender.send(EventMessage::Play(path)));
                     }
                     EventMessage::DirOpened(_) => {
                         todo!();
@@ -159,7 +168,17 @@ impl NtApp {
                     EventMessage::RenderSubtitle(_) => todo!(), // Render video and sound
                     EventMessage::Resize((width, height)) => {
                         if let Some(wind) = self.video_window.as_mut() {
-                            wind.resize(width, height)?;
+                            match player.as_mut() {
+                                Some(player) => {
+                                    player.pause();
+                                    wind.set_size(width, height);
+                                    // wind.clear_window();
+                                    player.resume();
+                                }
+                                None => {
+                                    wind.set_size(width, height);
+                                }
+                            }
                         }
                     }
                     EventMessage::SetPosition { x, y } => {
@@ -186,11 +205,19 @@ impl NtApp {
                             player.seek_finished();
                         }
                     }
+                    EventMessage::ExitVideoWindow => {
+                        // Stop the decoder and player before leave video window
+                        safe_send(sender.send(EventMessage::Stop));
+
+                        // Then return back to start window
+                        self.video_window.as_mut().unwrap().hide();
+                        self.start_window.show();
+                    }
                 }
             }
 
             if let Some(wind) = self.video_window.as_mut() {
-                wind.redrawl()?;
+                wind.render()?;
             }
         }
 

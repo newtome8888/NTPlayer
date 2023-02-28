@@ -1,16 +1,20 @@
-use std::{path::PathBuf, sync::Arc};
-use rsmpeg::ffi::AVFrame;
 use sdl2::video::WindowPos;
+use std::path::PathBuf;
 
-use crate::media::decoder::{VideoFrame, AudioFrame, SubtitleFrame};
+use crate::media::decoder::{AudioFrame, SubtitleFrame, VideoFrame};
 
 /// Message types for application related events
-pub enum EventMessage{
+pub enum EventMessage {
+    /// Exit application
+    Quit,
+    /// Exit video window and return back to the start window
+    ExitVideoWindow,
+
     /// Show error dialog
     ShowError(String),
 
     // For media state control
-    Play(PlayData),
+    Play(PathBuf),
     Pause,
     Resume,
     Stop,
@@ -21,25 +25,24 @@ pub enum EventMessage{
     SeekFinished,
 
     // File
-    FileOpened(FileOpenedData),
-    DirOpened(DirOpenedData),
+    FileOpened(PathBuf),
+    DirOpened(Vec<PathBuf>),
 
     // Rendering
-    RenderVideo(Arc<VideoFrame>),
+    RenderVideo(VideoFrame),
     RenderAudio(AudioFrame),
-    RenderSubtitle(Arc<SubtitleFrame>),
+    RenderSubtitle(SubtitleFrame),
 
     // UI layout
     Resize((u32, u32)),
-    SetPosition{x:WindowPos, y:WindowPos},
+    SetPosition {
+        x: WindowPos,
+        y: WindowPos,
+    },
 
     // Volume control
     UpVolume,
     DownVolume,
-}
-
-pub struct PlayData {
-    pub path: PathBuf,
 }
 
 pub struct MediaSelectedData {
@@ -48,12 +51,4 @@ pub struct MediaSelectedData {
 
 pub struct MediaItemDoubleClickedData {
     pub path: PathBuf,
-}
-
-pub struct FileOpenedData{
-    pub path: PathBuf,
-}
-
-pub struct DirOpenedData {
-    pub paths: Vec<&'static str>,
 }
