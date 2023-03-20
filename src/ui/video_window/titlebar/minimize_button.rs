@@ -4,7 +4,6 @@ use std::{
     rc::Rc,
 };
 
-use log::debug;
 use sdl2::{
     pixels::Color,
     rect::{Point, Rect},
@@ -13,11 +12,12 @@ use sdl2::{
 };
 
 use crate::{
-    entity::EventMessage,
-    global::EVENT_CHANNEL,
-    ui::{Button, MouseMotionParam, MouseUpParam, TButton, TControl},
-    util::error::{safe_send, SuperError},
+    ui::components::{rectangle::button::Button, MouseMotionParam, MouseUpParam, TControl},
+    util::error::SuperError,
 };
+
+const BACKGROUND_COLOR: Color = Color::RGB(51, 51, 255);
+const FORE_COLOR: Color = Color::WHITE;
 
 pub struct MinimizeButton {
     inner: Button,
@@ -41,20 +41,20 @@ impl MinimizeButton {
     }
 
     pub fn render(&mut self) -> Result<bool, SuperError> {
-        let mut canvas = self.canvas.borrow_mut();
-        let button_rect = Rect::new(self.x, self.y, self.width, self.height);
-
+        let mut canvas = self.canvas_mut();
+        let (x, y) = self.position();
+        let (width, height) = self.size();
+        let button_rect = Rect::new(x, y, width, height);
         // draw background
         if self.selected {
-            canvas.set_draw_color(Color::RGB(51, 51, 255));
-
+            canvas.set_draw_color(BACKGROUND_COLOR);
             canvas.fill_rect(button_rect)?;
         }
 
         // draw X shape, the size of X shape is const value 20X20
-        let (center_x, center_y) = self.center;
+        let (center_x, center_y) = self.center();
         let step = 5;
-        canvas.set_draw_color(Color::WHITE);
+        canvas.set_draw_color(FORE_COLOR);
         canvas.draw_line(
             Point::new(center_x - step, center_y),
             Point::new(center_x + step, center_y),
@@ -74,13 +74,11 @@ impl MinimizeButton {
             return Ok(false);
         }
 
-        self.canvas.borrow_mut().window_mut().minimize();
+        self.canvas_mut().window_mut().minimize();
 
         Ok(true)
     }
 }
-
-impl TButton for MinimizeButton {}
 
 impl Deref for MinimizeButton {
     type Target = Button;

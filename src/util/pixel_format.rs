@@ -26,7 +26,7 @@ use rsmpeg::{ffi::{
     // AVPixelFormat_AV_PIX_FMT_YUVJ422P
 }, avutil::AVFrame};
 
-use crate::{global::VIDEO_SUMMARY, media::decoder::VideoFrame};
+use crate::{media::decoder::VideoFrame, VIDEO_SUMMARY};
 
 pub fn parse_video_frame(frame: &AVFrame) -> VideoFrame {
     let r = VIDEO_SUMMARY.read().unwrap();

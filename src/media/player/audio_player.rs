@@ -7,12 +7,13 @@ use std::{
     time::Duration,
 };
 
-use super::traits::Player;
 use crate::{
     entity::EventMessage,
-    global::{AUDIO_BUFFER, AUDIO_SUMMARY, EVENT_CHANNEL, GLOBAL_PTS_MILLIS},
     util::error::{safe_send, SuperError},
+    {AUDIO_BUFFER, AUDIO_PTS_MILLIS, AUDIO_SUMMARY, EVENT_CHANNEL},
 };
+
+use super::Player;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum State {
@@ -95,19 +96,19 @@ impl AudioPlayer {
                         // go on
                     }
                     State::Seeking => {
-                        GLOBAL_PTS_MILLIS.store(-1, Ordering::Release);
+                        AUDIO_PTS_MILLIS.store(-1, Ordering::Release);
                         thread::sleep(sleep_duration);
                         continue;
                     }
                     State::SeekFinished => {
                         state.store(State::Playing);
-                    },
+                    }
                 }
 
                 // Play audio
                 if let Some(frame) = AUDIO_BUFFER.pop() {
-                    // Update timestamp of playing
-                    GLOBAL_PTS_MILLIS.store(frame.pts_millis, Ordering::Release);
+                    // Update timestamp of audio
+                    AUDIO_PTS_MILLIS.store(frame.pts_millis, Ordering::Release);
                     safe_send(EVENT_CHANNEL.0.send(EventMessage::RenderAudio(frame)));
                 }
 

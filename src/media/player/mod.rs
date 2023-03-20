@@ -1,10 +1,20 @@
 pub mod audio_player;
-pub mod traits;
 pub mod vedio_player;
 
 use crate::util::error::SuperError;
 
-use self::{audio_player::AudioPlayer, traits::Player, vedio_player::VideoPlayer};
+use self::{audio_player::AudioPlayer, vedio_player::VideoPlayer};
+
+pub trait Player {
+    fn play(&mut self);
+    fn pause(&mut self);
+    fn resume(&mut self);
+    fn stop(&mut self);
+    fn fast_forward(&mut self);
+    fn fast_rewind(&mut self);
+    fn seeking(&mut self);
+    fn seek_finished(&mut self);
+}
 
 pub struct MediaPlayer {
     audio_player: AudioPlayer,

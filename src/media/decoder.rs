@@ -3,7 +3,7 @@ use std::{
     ffi::CString,
     ops::{Deref, DerefMut},
     sync::{
-        atomic::{AtomicBool, AtomicI64, AtomicU8, Ordering},
+        atomic::{AtomicBool, AtomicI64, Ordering},
         Arc,
     },
     thread,
@@ -28,11 +28,11 @@ use rsmpeg::{
 
 use crate::{
     entity::EventMessage,
-    global::{
+    util::{error::safe_send, pixel_format::parse_video_frame, sample_format},
+    {
         AUDIO_BUFFER, AUDIO_SUMMARY, EVENT_CHANNEL, SUBTITLE_BUFFER, SUBTITLE_SUMMARY,
         VIDEO_BUFFER, VIDEO_SUMMARY,
     },
-    util::{error::safe_send, pixel_format::parse_video_frame, sample_format},
 };
 
 /// The wait duration if buffer queues are full
@@ -157,7 +157,11 @@ impl MediaDecoder {
                                 audio_stream.decoder_ctx = audio_stream
                                     .decoder_ctx
                                     .and_then(|dctx| {
-                                        let dctx = Self::decode_audio(dctx, &packet, &mut audio_dropped_frames);
+                                        let dctx = Self::decode_audio(
+                                            dctx,
+                                            &packet,
+                                            &mut audio_dropped_frames,
+                                        );
                                         Some(dctx)
                                     })
                                     .or_else(|| {
@@ -168,7 +172,11 @@ impl MediaDecoder {
                                 video_stream.decoder_ctx = video_stream
                                     .decoder_ctx
                                     .and_then(|dctx| {
-                                        let dctx = Self::decode_video(dctx, &packet, &mut video_dropped_frames);
+                                        let dctx = Self::decode_video(
+                                            dctx,
+                                            &packet,
+                                            &mut video_dropped_frames,
+                                        );
                                         Some(dctx)
                                     })
                                     .or_else(|| {
@@ -216,7 +224,11 @@ impl MediaDecoder {
     }
 
     // Notice! The context should be returned to return back the ownership
-    fn decode_audio(dctx: AVCodecContext, packet: &AVPacket, dropped_frames: &mut u8) -> AVCodecContext {
+    fn decode_audio(
+        dctx: AVCodecContext,
+        packet: &AVPacket,
+        dropped_frames: &mut u8,
+    ) -> AVCodecContext {
         let mut dctx = dctx;
         if let Err(err) = dctx.send_packet(Some(packet)) {
             error!("send packet to context error: {}", err);
@@ -253,7 +265,11 @@ impl MediaDecoder {
     }
 
     // Notice! The context should be returned to return back the ownership
-    fn decode_video(dctx: AVCodecContext, packet: &AVPacket, dropped_frames: &mut u8) -> AVCodecContext {
+    fn decode_video(
+        dctx: AVCodecContext,
+        packet: &AVPacket,
+        dropped_frames: &mut u8,
+    ) -> AVCodecContext {
         let mut dctx = dctx;
         if let Err(err) = dctx.send_packet(Some(packet)) {
             error!("send packet to context error: {}", err);

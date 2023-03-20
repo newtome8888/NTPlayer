@@ -4,7 +4,6 @@ use std::{
     rc::Rc,
 };
 
-use log::debug;
 use sdl2::{
     pixels::Color,
     rect::{Point, Rect},
@@ -13,9 +12,14 @@ use sdl2::{
 };
 
 use crate::{
-    ui::{Button, MouseMotionParam, TButton, TControl, MouseUpParam},
-    util::error::{SuperError, safe_send}, global::EVENT_CHANNEL, entity::EventMessage,
+    entity::EventMessage,
+    ui::components::{rectangle::button::Button, MouseMotionParam, MouseUpParam, TControl},
+    util::error::{safe_send, SuperError},
+    EVENT_CHANNEL,
 };
+
+const BACKGROUND_COLOR: Color = Color::RGB(220, 20, 60);
+const FORE_COLOR: Color = Color::WHITE;
 
 pub struct CloseButton {
     inner: Button,
@@ -39,20 +43,21 @@ impl CloseButton {
     }
 
     pub fn render(&mut self) -> Result<bool, SuperError> {
-        let mut canvas = self.canvas.borrow_mut();
-        let button_rect = Rect::new(self.x, self.y, self.width, self.height);
+        let mut canvas = self.canvas_mut();
+        let (x, y) = self.position();
+        let (width, height) = self.size();
+        let button_rect = Rect::new(x, y, width, height);
 
         // draw background
         if self.selected {
-            canvas.set_draw_color(Color::RGB(220, 20, 60));
-
+            canvas.set_draw_color(BACKGROUND_COLOR);
             canvas.fill_rect(button_rect)?;
         }
 
         // draw X shape, the size of X shape is const value 20X20
-        let (center_x, center_y) = self.center;
+        let (center_x, center_y) = self.center();
         let step = 5;
-        canvas.set_draw_color(Color::WHITE);
+        canvas.set_draw_color(FORE_COLOR);
         canvas.draw_line(
             Point::new(center_x - step, center_y - step),
             Point::new(center_x + step, center_y + step),
@@ -71,8 +76,8 @@ impl CloseButton {
         Ok(true)
     }
 
-    pub fn on_mouse_up(&mut self, params: &MouseUpParam) -> Result<bool, SuperError>{
-        if ! self.inner.on_mouse_up(params)?{
+    pub fn on_mouse_up(&mut self, params: &MouseUpParam) -> Result<bool, SuperError> {
+        if !self.inner.on_mouse_up(params)? {
             return Ok(false);
         }
 
@@ -81,8 +86,6 @@ impl CloseButton {
         Ok(true)
     }
 }
-
-impl TButton for CloseButton {}
 
 impl Deref for CloseButton {
     type Target = Button;

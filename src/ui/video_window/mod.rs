@@ -1,6 +1,5 @@
-mod playbar;
+mod controlbar;
 mod playbox;
-mod progressbar;
 mod titlebar;
 
 use std::{
@@ -21,26 +20,27 @@ use sdl2::{
 
 use crate::media::decoder::VideoFrame;
 use crate::util::error::SuperError;
-use crate::{
-    global::{APP_NAME, INIT_HEIGHT, INIT_WIDTH, LOGO_PATH},
-    util::error::handle_result,
-};
+use crate::{APP_NAME, INIT_HEIGHT, INIT_WIDTH, LOGO_PATH};
 
-use self::playbar::PlayBar;
+use self::controlbar::ControlBar;
 use self::playbox::PlayBox;
-use self::progressbar::ProgressBar;
 use self::titlebar::TitleBar;
 
-use super::{MouseDownParam, MouseMotionParam, MouseUpParam, MouseWheelParam, RectangleControl};
+use super::{
+    components::{
+        rectangle::Rectangle, MouseDownParam, MouseMotionParam, MouseUpParam, MouseWheelParam,
+        TControl,
+    },
+    NTWindow,
+};
 
 pub const BACKGROUND_COLOR: Color = Color::RGB(0, 0, 0);
 
 pub struct VideoWindow {
     pub id: u32,
-    inner: RectangleControl,
+    inner: Rectangle,
     titlebar: TitleBar,
-    playbar: PlayBar,
-    progressbar: ProgressBar,
+    controlbar: ControlBar,
     playbox: PlayBox,
 }
 
@@ -56,28 +56,20 @@ impl VideoWindow {
         let play_box = PlayBox::new(0, 0, INIT_WIDTH, INIT_HEIGHT, canvas.clone())?;
 
         Ok(Self {
-            titlebar: TitleBar::new(canvas.clone(), None, None, None, None)?,
-            playbar: PlayBar,
-            progressbar: ProgressBar,
+            titlebar: TitleBar::new(canvas.clone())?,
+            controlbar: ControlBar::new(canvas.clone())?,
             playbox: play_box,
             id: window_id,
-            inner: RectangleControl::new(x, y, width, height, canvas.clone())?,
+            inner: Rectangle::new(x, y, width, height, canvas.clone())?,
         })
     }
 
     pub fn show(&mut self) {
-        self.canvas.borrow_mut().window_mut().show();
+        self.canvas_mut().window_mut().show();
     }
 
     pub fn hide(&mut self) {
-        self.canvas.borrow_mut().window_mut().hide();
-    }
-
-    pub fn set_logo(&mut self, path: &str) -> Result<(), SuperError> {
-        let logo = Surface::from_file(path)?;
-        self.canvas.borrow_mut().window_mut().set_icon(logo);
-
-        Ok(())
+        self.canvas_mut().window_mut().hide();
     }
 
     pub fn update_video_frame(&mut self, frame: VideoFrame) {
@@ -113,6 +105,10 @@ impl VideoWindow {
         if params.window_id != self.id {
             return Ok(false);
         }
+
+        self.controlbar.on_mouse_down(params)?;
+        self.titlebar.on_mouse_down(params)?;
+
         Ok(true)
     }
 
@@ -121,7 +117,9 @@ impl VideoWindow {
             return Ok(false);
         }
 
+        self.playbox.on_mouse_up(params)?;
         self.titlebar.on_mouse_up(params)?;
+        self.controlbar.on_mouse_up(params)?;
 
         Ok(true)
     }
@@ -132,6 +130,7 @@ impl VideoWindow {
         }
 
         self.titlebar.on_mouse_motion(params)?;
+        self.controlbar.on_mouse_motion(params)?;
         Ok(true)
     }
 
@@ -143,13 +142,19 @@ impl VideoWindow {
     }
 
     pub fn set_size(&mut self, width: u32, height: u32) {
-        let result = {
-            self.canvas
-                .borrow_mut()
-                .window_mut()
-                .set_size(width, height)
+        // Update inner size first, it's important for later computing
+        self.inner.set_size(width, height);
+
+        let func = || -> Result<(), SuperError> {
+            let mut canvas = self.canvas_mut();
+            let wind = canvas.window_mut();
+
+            wind.set_size(width, height)?;
+            wind.set_position(WindowPos::Centered, WindowPos::Centered);
+
+            Ok(())
         };
-        match result {
+        match func() {
             Ok(_) => {
                 self.on_resized(width, height);
             }
@@ -158,46 +163,71 @@ impl VideoWindow {
     }
 
     pub fn on_resized(&mut self, width: u32, height: u32) {
+        self.inner.set_size(width, height);
+
         // Adjust playbox size
         self.playbox.set_size(width, height);
-
         // Adjuist titlebar size
-        let tb_height = self.titlebar.height;
-        self.titlebar.set_size(width, tb_height);
+        self.titlebar.set_size(width, None);
+        // Adjust controlbar size
+        self.controlbar.set_size(width, None);
+
+        // Adjust controlbar position        
+        let y = height - self.controlbar.size().1 - self.controlbar.margin().3;
+        self.controlbar.set_position(None, y as i32);
     }
 
-    pub fn set_position(&mut self, x: WindowPos, y: WindowPos) {
-        self.canvas.borrow_mut().window_mut().set_position(x, y);
+    pub fn set_position<X, Y>(&mut self, x: X, y: Y)
+    where
+        X: Into<Option<i32>>,
+        Y: Into<Option<i32>>,
+    {
+        println!("set window position");
+        let x: Option<i32> = x.into();
+        let y: Option<i32> = y.into();
+
+        self.inner.set_position(x, y);
+
+        // Set position of sdl window
+        {
+            let mut canvas = self.canvas_mut();
+            let wind = canvas.window_mut();
+            let (x, y) = self.inner.position();
+
+            wind.set_position(WindowPos::Positioned(x), WindowPos::Positioned(y));
+        }
     }
 
     pub fn render(&mut self) -> Result<bool, SuperError> {
-        self.canvas.borrow_mut().set_draw_color(Color::BLACK);
-        self.canvas.borrow_mut().clear();
+        self.canvas_mut().set_draw_color(Color::BLACK);
+        self.canvas_mut().clear();
 
         // Render content
         self.playbox.render()?;
         self.titlebar.render()?;
+        self.controlbar.render()?;
 
         // Display on screen
-        self.canvas.borrow_mut().present();
+        self.canvas_mut().present();
 
         Ok(true)
     }
 
     pub fn set_fullscreen(&mut self, fs_type: FullscreenType) {
-        if let Err(err) = self
-            .canvas
-            .borrow_mut()
-            .window_mut()
-            .set_fullscreen(fs_type)
-        {
+        if let Err(err) = self.canvas_mut().window_mut().set_fullscreen(fs_type) {
             error!("Failed to set fullscreen state, error: {:?}", err);
         }
     }
 }
 
+impl NTWindow for VideoWindow {
+    fn id(&self) -> u32 {
+        self.id
+    }
+}
+
 impl Deref for VideoWindow {
-    type Target = RectangleControl;
+    type Target = Rectangle;
 
     fn deref(&self) -> &Self::Target {
         &self.inner

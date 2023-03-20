@@ -1,20 +1,20 @@
-use crossbeam::atomic::AtomicCell;
-use log::info;
-// use tracing::{info, debug};
 use std::{
     cell::Cell,
-    sync::Arc,
+    sync::{atomic::Ordering, Arc},
     thread::{self, JoinHandle},
     time::Duration,
 };
 
+use crossbeam::atomic::AtomicCell;
+use log::info;
+
 use crate::{
     entity::EventMessage,
-    global::{EVENT_CHANNEL, VIDEO_BUFFER, VIDEO_SUMMARY},
     util::error::{safe_send, SuperError},
+    {EVENT_CHANNEL, VIDEO_BUFFER, VIDEO_PTS_MILLIS, VIDEO_SUMMARY},
 };
 
-use super::traits::Player;
+use super::Player;
 
 pub struct VideoPlayer {
     /// State of the audio player
@@ -95,6 +95,8 @@ impl VideoPlayer {
 
                     // Play video
                     if let Some(frame) = VIDEO_BUFFER.pop() {
+                        // Update timestamp of video
+                        VIDEO_PTS_MILLIS.store(frame.pts_millis, Ordering::Release);
                         // Send video data to UI
                         safe_send(sender.send(EventMessage::RenderVideo(frame)));
 

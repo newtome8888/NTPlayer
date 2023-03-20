@@ -3,7 +3,7 @@ use crossbeam::channel::{SendError};
 use log::error;
 use std::{error::Error, fmt::Display};
 
-use crate::{entity::EventMessage, global::EVENT_CHANNEL};
+use crate::{entity::EventMessage, EVENT_CHANNEL};
 
 pub type SuperError = Box<dyn Error>;
 

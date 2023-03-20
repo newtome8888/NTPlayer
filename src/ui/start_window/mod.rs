@@ -16,18 +16,16 @@ use sdl2::{
     VideoSubsystem,
 };
 
-use crate::global::{APP_NAME, LOGO_PATH};
-use crate::util::error::SuperError;
-
 use self::{play_button::PlayButton, titlebar::TitleBar};
+use crate::{util::error::SuperError, APP_NAME, LOGO_PATH};
 
-use super::{
-    MouseDownParam, MouseMotionParam, MouseUpParam, MouseWheelParam, RectangleControl, TControl,
-};
+use super::{components::{
+    rectangle::Rectangle, MouseDownParam, MouseMotionParam, MouseUpParam, MouseWheelParam, TControl,
+}, NTWindow};
 
 pub struct StartWindow {
     pub id: u32,
-    inner: RectangleControl,
+    inner: Rectangle,
     title_bar: TitleBar,
     play_button: PlayButton,
 }
@@ -47,7 +45,7 @@ impl StartWindow {
 
         let mut inst = Self {
             id: window_id,
-            inner: RectangleControl::new(x, y, width, height, canvas)?,
+            inner: Rectangle::new(x, y, width, height, canvas)?,
             title_bar: TitleBar,
             play_button,
         };
@@ -57,13 +55,15 @@ impl StartWindow {
         Ok(inst)
     }
 
-    pub fn show(&mut self) {
-        self.canvas.borrow_mut().window_mut().show();
-        self.render();
+    pub fn show(&mut self) -> Result<(), SuperError> {
+        self.canvas_mut().window_mut().show();
+        self.render()?;
+
+        Ok(())
     }
 
     pub fn hide(&mut self) {
-        self.canvas.borrow_mut().window_mut().hide();
+        self.canvas_mut().window_mut().hide();
     }
 
     fn prepare_window(sys: &VideoSubsystem) -> Result<Window, SuperError> {
@@ -137,15 +137,20 @@ impl StartWindow {
         self.play_button.render()?;
 
         // Display on screen
-        let canvas = self.canvas.clone();
-        canvas.borrow_mut().present();
+        let canvas = self.canvas_mut().present();
 
         Ok(true)
     }
 }
 
+impl NTWindow for StartWindow{
+    fn id(&self)->u32 {
+        self.id
+    }
+}
+
 impl Deref for StartWindow {
-    type Target = RectangleControl;
+    type Target = Rectangle;
 
     fn deref(&self) -> &Self::Target {
         &self.inner

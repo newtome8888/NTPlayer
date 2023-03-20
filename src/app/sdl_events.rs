@@ -1,18 +1,20 @@
 use sdl2::{
     event::{Event, WindowEvent},
-    keyboard::{Keycode, Mod},
-    EventPump, Sdl, video::FullscreenType,
+    keyboard::Keycode,
+    video::FullscreenType,
+    EventPump, Sdl,
 };
 
 use super::MainLoopState;
 use crate::{
     entity::EventMessage,
-    global::{EVENT_CHANNEL, INIT_HEIGHT, INIT_WIDTH},
     ui::{
-        start_window::StartWindow, video_window::VideoWindow, MouseDownParam, MouseMotionParam,
-        MouseUpParam, MouseWheelParam,
+        components::{MouseDownParam, MouseMotionParam, MouseUpParam, MouseWheelParam},
+        start_window::StartWindow,
+        video_window::VideoWindow,
     },
     util::error::{safe_send, SuperError},
+    EVENT_CHANNEL,
 };
 
 pub(in crate::app) struct SdlEvents {
@@ -39,41 +41,45 @@ impl SdlEvents {
             match event {
                 Event::Quit { .. } => return Ok(MainLoopState::Quit),
                 Event::KeyDown {
-                    keycode,
-                    window_id,
-                    keymod,
-                    ..
-                } => {
-                    println!("mod: {}", keymod);
-                    match keycode {
-                        Some(Keycode::Escape) => {
-                            if window_id == start_window.id {
-                                return Ok(MainLoopState::Quit);
-                            }
-                            if let Some(wind) = video_window {
-                                if window_id == wind.id {
-                                    wind.set_fullscreen(FullscreenType::Off);
-                                }
-                            }
-                        }
-                        Some(Keycode::Up) => {
-                            safe_send(sender.send(EventMessage::UpVolume));
-                        }
-                        Some(Keycode::Down) => {
-                            safe_send(sender.send(EventMessage::DownVolume));
-                        }
-                        Some(Keycode::Left) => {
-                            safe_send(sender.send(EventMessage::Rewind));
-                        }
-                        Some(Keycode::Right) => {
-                            safe_send(sender.send(EventMessage::Forward));
-                        }
-                        Some(Keycode::F4) => {
+                    keycode, window_id, ..
+                } => match keycode {
+                    Some(Keycode::Escape) => {
+                        if window_id == start_window.id {
                             return Ok(MainLoopState::Quit);
                         }
-                        _ => {}
+                        if let Some(wind) = video_window {
+                            if window_id == wind.id {
+                                wind.set_fullscreen(FullscreenType::Off);
+                            }
+                        }
                     }
-                }
+                    Some(Keycode::Up) => {
+                        if let Some(wind) = video_window {
+                            if window_id == wind.id {
+                                safe_send(sender.send(EventMessage::UpVolume));
+                            }
+                        }
+                    }
+                    Some(Keycode::Down) => {
+                        if video_window.is_some() {
+                            safe_send(sender.send(EventMessage::DownVolume));
+                        }
+                    }
+                    Some(Keycode::Left) => {
+                        if video_window.is_some() {
+                            safe_send(sender.send(EventMessage::Rewind));
+                        }
+                    }
+                    Some(Keycode::Right) => {
+                        if video_window.is_some() {
+                            safe_send(sender.send(EventMessage::Forward));
+                        }
+                    }
+                    Some(Keycode::F4) => {
+                        return Ok(MainLoopState::Quit);
+                    }
+                    _ => {}
+                },
                 Event::MouseMotion {
                     timestamp,
                     window_id,
@@ -95,9 +101,13 @@ impl SdlEvents {
                         yrel,
                     };
 
-                    start_window.on_mouse_motion(&params)?;
+                    if window_id == start_window.id {
+                        start_window.on_mouse_motion(&params)?;
+                    }
                     if let Some(window) = video_window {
-                        window.on_mouse_motion(&params)?;
+                        if window_id == window.id {
+                            window.on_mouse_motion(&params)?;
+                        }
                     }
                 }
                 Event::MouseButtonUp {
@@ -118,9 +128,13 @@ impl SdlEvents {
                         x,
                         y,
                     };
-                    start_window.on_mouse_up(&params)?;
+                    if window_id == start_window.id {
+                        start_window.on_mouse_up(&params)?;
+                    }
                     if let Some(window) = video_window {
-                        window.on_mouse_up(&params)?;
+                        if window_id == window.id {
+                            window.on_mouse_up(&params)?;
+                        }
                     }
                 }
                 Event::MouseButtonDown {
@@ -141,10 +155,14 @@ impl SdlEvents {
                         x,
                         y,
                     };
+                    if window_id == start_window.id {
+                        start_window.on_mouse_down(&params)?;
+                    }
 
-                    start_window.on_mouse_down(&params)?;
                     if let Some(window) = video_window {
-                        window.on_mouse_down(&params)?;
+                        if window_id == window.id {
+                            window.on_mouse_down(&params)?;
+                        }
                     }
                 }
                 Event::MouseWheel {
@@ -163,10 +181,13 @@ impl SdlEvents {
                         y,
                         direction,
                     };
-
-                    start_window.on_mouse_wheel(&params)?;
+                    if window_id == start_window.id {
+                        start_window.on_mouse_wheel(&params)?;
+                    }
                     if let Some(window) = video_window {
-                        window.on_mouse_wheel(&params)?;
+                        if window_id == window.id {
+                            window.on_mouse_wheel(&params)?;
+                        }
                     }
                 }
                 Event::Window {

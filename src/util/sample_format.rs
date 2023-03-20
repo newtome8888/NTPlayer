@@ -1,7 +1,8 @@
 use std::{slice, sync::atomic::Ordering};
 
 use rsmpeg::avutil::AVFrame;
-use crate::{global::{AUDIO_SUMMARY, VOLUME, VOLUME_BENCHMARK}, media::decoder::AudioFrame};
+
+use crate::{media::decoder::AudioFrame, AUDIO_SUMMARY, VOLUME_BENCHMARK, VOLUME};
 
 /// Parse ffmpeg audio frame to AudioFrame
 pub fn parse_audio_frame(frame: &mut AVFrame) -> AudioFrame {
@@ -18,9 +19,9 @@ pub fn parse_audio_frame(frame: &mut AVFrame) -> AudioFrame {
     // Set volume to current frame
     let volume = VOLUME.load(Ordering::Acquire) as f32 / VOLUME_BENCHMARK;
     let mut data = vec![];
-    for (d0, d1) in left_slice.iter().zip(right_slice.iter()) {
-        data.push((*d0) * volume);
-        data.push((*d1) * volume);
+    for (left, right) in left_slice.iter().zip(right_slice.iter()) {
+        data.push((*left) * volume);
+        data.push((*right) * volume);
     }
 
     let audio_frame = AudioFrame {

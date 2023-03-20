@@ -1,4 +1,3 @@
-use sdl2::video::WindowPos;
 use std::path::PathBuf;
 
 use crate::media::decoder::{AudioFrame, SubtitleFrame, VideoFrame};
@@ -20,6 +19,7 @@ pub enum EventMessage {
     Stop,
     Forward,
     Rewind,
+    SeekTo(i64),
 
     // Indicate that forward or rewind operation has been completed
     SeekFinished,
@@ -35,10 +35,8 @@ pub enum EventMessage {
 
     // UI layout
     Resize((u32, u32)),
-    SetPosition {
-        x: WindowPos,
-        y: WindowPos,
-    },
+    SetPosition (Option<i32>, Option<i32>),
+    ToggleFullScreen,
 
     // Volume control
     UpVolume,

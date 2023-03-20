@@ -11,7 +11,7 @@ use log4rs::{
     Handle,
 };
 
-pub fn load_logger(level: LevelFilter) -> Option<Handle> {
+pub fn init_logger(level: LevelFilter) -> Option<Handle> {
     let level = level;
     let today = Local::now().format("%Y-%m-%d").to_string();
     let file_path = format!("log/{today}.log");
