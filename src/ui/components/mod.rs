@@ -13,7 +13,7 @@ use sdl2::{
 
 use crate::util::error::SuperError;
 
-const DOUBLE_CLICK_INTERVAL: u128 = 200;
+const DOUBLE_CLICK_INTERVAL: u128 = 300;
 
 pub trait TControl {
     /// Handle mouse botton down event

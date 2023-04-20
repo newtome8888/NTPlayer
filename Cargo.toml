@@ -11,7 +11,7 @@ rust-version = "1.66"
 [dependencies]
 log = "0.4.17"
 log4rs = {version = "1.2.0", features = ["background_rotation"]}
-serde = { version = "1.0.152", features = ["derive"] } #  Serializing and deserializing Rust data structures efficiently and generically
+serde = { version = "1.0.160", features = ["derive"] } #  Serializing and deserializing Rust data structures efficiently and generically
 serde_yaml = "0.9"
 crossbeam = "0.8.2" # Provides a set of tools for concurrent programming
 chrono = "0.4.23" # Date and time library for Rust

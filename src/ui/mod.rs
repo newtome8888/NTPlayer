@@ -1,6 +1,7 @@
 pub mod components;
 pub mod start_window;
 pub mod video_window;
+pub mod play_list_window;
 
 use sdl2::ttf::Sdl2TtfContext;
 use static_init::dynamic;

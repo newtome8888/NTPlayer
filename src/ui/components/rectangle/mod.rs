@@ -2,13 +2,14 @@ pub mod button;
 pub mod label;
 pub mod panel;
 pub mod progressbar;
+pub mod tree;
 
 use std::{cell::RefCell, rc::Rc, time::Instant};
 
 use sdl2::{gfx::primitives::DrawRenderer, pixels::Color, render::Canvas, video::Window};
 
+use super::{ControlDistance, DistanceDirection, TControl};
 use crate::util::error::SuperError;
-use super::{ControlDistance, DistanceDirection, TControl, DOUBLE_CLICK_INTERVAL};
 
 /// The basic struct of Rectangle control,
 /// All the controls with rectangle shape should extend this struct.
@@ -431,8 +432,6 @@ impl TControl for Rectangle {
         if !self.is_cursor_in(params.x, params.y) {
             return Ok(false);
         }
-
-
 
         self.preclick = Instant::now();
 

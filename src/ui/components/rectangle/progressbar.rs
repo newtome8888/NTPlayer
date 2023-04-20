@@ -24,7 +24,6 @@ use crate::{
 /// The left and right padding for the bar body，
 /// it's located between the prefix/suffix and bar body
 const BAR_LR_PADDING: u32 = 5;
-
 /// The position of bar body
 /// # Notice
 /// * This variable is put here because its value cannot be set in render function,
