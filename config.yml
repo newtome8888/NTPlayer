@@ -28,7 +28,7 @@ mv:
       - 7z
       - avi
 del:
-  path: 'C:\Users\刘东\Downloads'
+  path: 'C:\Users\user\Downloads'
   filters:
     #Size filter, formatted as '> 100M', '<=  10G' or '== 5K'.
     #The units available are 'B', 'K', 'M', 'G', 'T'
